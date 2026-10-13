@@ -4,7 +4,7 @@
 import { POS, POS_PL, POS_ONE, CLUBS, SHORT, CHIPS, DEFAULT_RULES, ROUNDS, FIXTURES, EXAMPLE, STYLES, MODELS } from "./constants.js";
 import {
   r1, fmt, norm, canonClub, normPos, lastName, validateSquad, lineupProblems, autoLineup, benchOrder,
-  pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo,
+  pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText,
 } from "./rules.js";
 import { buildAnalysisPrompt, SQUAD_IMPORT_PROMPT } from "./prompt.js";
 import { askJson, imageFileToBlock } from "./ai.js";
@@ -24,9 +24,19 @@ let state = loadState();
 let settings = loadSettings();
 const ui = {
   tab: "squad", editing: false, draft: null, setOrig: false, selected: null, swapFrom: null, squadMsg: "",
-  aiBusy: false, ctl: null, timer: null, started: 0, aiMsg: "", roundImages: [], importBusy: false, importMsg: "",
-  resetArm: false, importArm: false, notice: "", keyMsg: "",
+  aiBusy: false, ctl: null, timer: null, started: 0, retry: 0, aiMsg: "", roundImages: [], importBusy: false, importMsg: "",
+  resetArm: false, importArm: false, notice: "", keyMsg: "", histDel: null,
 };
+
+async function copyText(txt) {
+  try { await navigator.clipboard.writeText(txt); return true; } catch (e) { return false; }
+}
+// Gdy schowek jest niedostępny: zaznacza tekst elementu, żeby skopiować go ręcznie.
+function selectText(el) {
+  const range = document.createRange(); range.selectNodeContents(el);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(range);
+}
+const retryNote = () => ui.retry ? ` · serwery zajęte, próba ${ui.retry + 1}` : "";
 
 function save() {
   const ok = saveState(state);
@@ -60,12 +70,16 @@ async function runAnalysis(fix) {
   maybeRevertFreeHit(true);
   const done = currentDone(), next = done + 1;
   const prompt = buildAnalysisPrompt(state, { done, next, free: freeNow(), fixtures: fixturesFor(next), hasImages: ui.roundImages.length > 0, fix });
-  ui.aiBusy = true; ui.aiMsg = ""; ui.ctl = new AbortController(); ui.started = Date.now();
+  ui.aiBusy = true; ui.aiMsg = ""; ui.retry = 0; ui.ctl = new AbortController(); ui.started = Date.now();
   renderRound();
-  ui.timer = setInterval(() => { const el = $("#aiTimer"); if (el) el.textContent = Math.round((Date.now() - ui.started) / 1000) + " s"; }, 1000);
+  const tick = () => { const el = $("#aiTimer"); if (el) el.textContent = Math.round((Date.now() - ui.started) / 1000) + " s" + retryNote(); };
+  ui.timer = setInterval(tick, 1000);
   try {
     const images = await Promise.all(ui.roundImages.map(f => imageFileToBlock(f)));
-    const res = await askJson({ apiKey: settings.apiKey, model: settings.model, prompt, images, signal: ui.ctl.signal, maxTokens: 6000 });
+    const res = await askJson({
+      apiKey: settings.apiKey, model: settings.model, prompt, images, signal: ui.ctl.signal, maxTokens: 6000,
+      onRetry: n => { ui.retry = n; tick(); },
+    });
     if (!res || typeof res !== "object" || Array.isArray(res)) throw { message: "AI zwróciło odpowiedź w złym formacie. Spróbuj jeszcze raz." };
     state.pendingRec = Object.assign(cleanRec(res, state.current), { forRound: next, afterRound: done, createdAt: Date.now() });
     save();
@@ -84,7 +98,10 @@ async function importScreenshot(file) {
   ui.importBusy = true; ui.importMsg = "Odczytuję zrzut ekranu…"; renderSquad();
   try {
     const image = await imageFileToBlock(file);
-    const res = await askJson({ apiKey: settings.apiKey, model: settings.model, prompt: SQUAD_IMPORT_PROMPT, images: [image], maxTokens: 2048 });
+    const res = await askJson({
+      apiKey: settings.apiKey, model: settings.model, prompt: SQUAD_IMPORT_PROMPT, images: [image], maxTokens: 2048,
+      onRetry: n => { ui.importMsg = `Serwery Anthropic są zajęte. Ponawiam (próba ${n + 1})…`; renderSquad(); },
+    });
     const list = Array.isArray(res && res.players) ? res.players : [];
     if (!list.length) throw { message: "Nie znalazłem zawodników na tym zrzucie. Spróbuj zrzutu widoku boiska." };
     const draft = emptyDraft();
@@ -148,6 +165,8 @@ function saveDraft() {
   if (!vice || vice === captain) vice = pickCaptain(players, xi, captain);
   state.current = { players, bank, xi, bench, captain, vice };
   if (!state.original || ui.setOrig) state.original = { players: clone(players), bank, savedAt: Date.now() };
+  // Po ręcznej edycji cofnięcie planu skasowałoby te poprawki – zostaje tylko tekst planu.
+  if (state.lastPlan) state.lastPlan.undo = null;
   ui.editing = false; ui.draft = null; ui.setOrig = false; ui.importMsg = ""; ui.squadMsg = "Skład zapisany.";
   save(); renderAll();
 }
@@ -168,6 +187,7 @@ function applyRec() {
   if (!rec || !state.current) return;
   const ev = evalRec(rec, evalCtx());
   if (ev.errors.length) return;
+  const undo = clone({ current: state.current, chips: state.chips, freeHit: state.freeHit, rounds: state.rounds, draftRound: state.draftRound, pendingRec: rec });
   const before = clone(state.current);
   if (ev.chip) {
     state.chips[ev.chip] = false;
@@ -175,9 +195,22 @@ function applyRec() {
   }
   state.current = applyEvaluated(state.current, ev, state.rules, newId);
   logRound({ transfers: ev.list.map(t => ({ out: t.out.name, in: t.inn.name, price: t.inn.price })), chip: ev.chip, hits: ev.hits, summary: rec.summary }, before.players);
+  state.lastPlan = { forRound: rec.forRound, text: planText({ forRound: rec.forRound, ev, after: state.current, hitCost: state.rules.hitCost }), appliedAt: Date.now(), undo };
   state.pendingRec = null;
-  ui.squadMsg = ev.list.length ? `Zmiany zastosowane: ${ev.list.length} transfer(y). Wprowadź je też w Sofascore.` : "Ustawienie zapisane. Wprowadź je też w Sofascore.";
+  ui.selected = null; ui.swapFrom = null;
+  ui.squadMsg = ev.list.length ? `Zastosowano ${countN(ev.list.length, "transfer", "transfery", "transferów")}. Wprowadź zmiany także w Sofascore.` : "Ustawienie zapisane. Wprowadź je też w Sofascore.";
   save(); switchTab("squad");
+}
+
+// Przywraca skład, chipy, historię i plan sprzed „Zastosuj zmiany”.
+function undoPlan() {
+  const lp = state.lastPlan;
+  if (!lp || !lp.undo) return;
+  Object.assign(state, clone(lp.undo));
+  state.lastPlan = null;
+  ui.selected = null; ui.swapFrom = null; ui.notice = "";
+  ui.squadMsg = `Cofnięto plan na kolejkę ${lp.forRound}. Możesz go poprawić i zastosować ponownie w zakładce Kolejka.`;
+  save(); renderAll();
 }
 
 function logRound(extra, roster) {
@@ -203,9 +236,13 @@ function logRound(extra, roster) {
 /* ---------- header ---------- */
 function renderHeader() {
   const ri = roundInfo(ROUNDS);
-  $("#nextInfo").textContent = ri.next
-    ? `Następna kolejka: ${ri.next.n} · termin ${fmtDate(ri.deadline)}${ri.next.sure ? "" : " (szac.)"}`
-    : "Faza ligowa zakończona";
+  const el = $("#nextInfo");
+  if (!ri.next) { el.textContent = "Faza ligowa zakończona"; el.dataset.urgent = ""; return ri.done; }
+  const left = timeLeft(ri.deadline);
+  el.textContent = `Kolejka ${ri.next.n} · termin ${fmtDate(ri.deadline)}${ri.next.sure ? "" : " (szac.)"}${left ? ` · za ${left}` : ""}`;
+  // Ostatnia doba przed terminem – wyróżnione, żeby nie przegapić zmian w Sofascore.
+  el.dataset.urgent = ri.deadline.getTime() - Date.now() < 24 * 3600e3 ? "1" : "";
+  return ri.done;
 }
 
 /* ---------- squad tab ---------- */
@@ -233,6 +270,16 @@ function renderSquad() {
   el.innerHTML = `
     ${ui.notice ? `<div class="notice">${esc(ui.notice)}</div>` : ""}
     ${ui.squadMsg ? `<div class="notice info">${esc(ui.squadMsg)}</div>` : ""}
+    ${state.lastPlan && !state.lastPlan.hidden ? `<div class="card">
+      <h3>Do wprowadzenia w Sofascore</h3>
+      <pre class="plan-text" id="planText">${esc(state.lastPlan.text)}</pre>
+      <div class="actions">
+        <button class="btn" id="planCopy">Skopiuj plan</button>
+        ${state.lastPlan.undo ? `<button class="btn" id="planUndo">Cofnij plan</button>` : ""}
+        <button class="btn ghost" id="planHide">Ukryj</button>
+        <span class="small muted" id="planMsg"></span>
+      </div>
+    </div>` : ""}
     <div class="stats">
       <div class="stat"><span>Wartość</span><b class="num">${fmt(value)}</b></div>
       <div class="stat"><span>Bank</span><b class="num">${fmt(cur.bank)}</b></div>
@@ -268,6 +315,13 @@ function renderSquad() {
   on("swapCancel", () => { ui.swapFrom = null; renderSquad(); });
   on("editSquad", () => { ui.editing = true; ui.draft = draftFromCurrent(); ui.squadMsg = ""; renderSquad(); });
   on("goRound", () => switchTab("round"));
+  on("planCopy", async () => {
+    const ok = await copyText(state.lastPlan.text);
+    if (!ok) selectText($("#planText"));
+    $("#planMsg").textContent = ok ? "Skopiowano." : "Zaznaczono plan – skopiuj go ręcznie.";
+  });
+  on("planUndo", undoPlan);
+  on("planHide", () => { state.lastPlan.hidden = true; save(); renderSquad(); });
 }
 
 function onPlayerTap(pid) {
@@ -416,7 +470,7 @@ function renderRound() {
       ${!aiReady() ? `<div class="notice">Dodaj klucz API Anthropic w zakładce Zasady, żeby włączyć analizę AI. Punkty możesz zapisywać bez niego.</div>` : ""}
       <div class="actions">
         <button class="btn primary" id="analyze" ${!aiReady() || ui.aiBusy || next > 8 ? "disabled" : ""}>${ui.aiBusy ? "Analizuję…" : state.pendingRec ? "Analizuj ponownie" : "Analizuj z AI"}</button>
-        ${ui.aiBusy ? `<button class="btn" id="stopAi">Zatrzymaj</button><span class="timer muted" id="aiTimer">0 s</span>` : ""}
+        ${ui.aiBusy ? `<button class="btn" id="stopAi">Zatrzymaj</button><span class="timer muted" id="aiTimer">${Math.round((Date.now() - ui.started) / 1000)} s${retryNote()}</span>` : ""}
         <button class="btn ghost" id="logOnly" ${ui.aiBusy ? "disabled" : ""}>Zapisz punkty bez zmian</button>
       </div>
       ${ui.aiBusy ? `<p class="small muted">AI przegląda skład, zasady i terminarz. Zwykle trwa to od 20 s do 2 minut.</p>` : ""}
@@ -431,6 +485,8 @@ function bindRound() {
   const d = state.draftRound;
   const bindVal = (id, key) => { const i = $("#" + id); if (i) i.addEventListener("input", () => { d[key] = i.value; draftSave(); }); };
   bindVal("rTotal", "total"); bindVal("rNews", "news"); bindVal("rMarket", "market"); bindVal("rFree", "free"); bindVal("rFixtures", "fixtures");
+  // Liczba darmowych transferów zmienia minusowe punkty w planie – przelicz go od razu.
+  $("#rFree").addEventListener("input", () => { if (state.pendingRec) renderRec(); });
   const rd = $("#rDone");
   rd.addEventListener("change", () => { d.done = Math.max(1, Math.min(8, parseInt(rd.value, 10) || 1)); save(); renderRound(); });
   document.querySelectorAll("#tab-round [data-ppid]").forEach(i => i.addEventListener("input", () => {
@@ -443,7 +499,7 @@ function bindRound() {
   const sc = $("#rShotsClear"); if (sc) sc.addEventListener("click", () => { ui.roundImages = []; renderRound(); });
   $("#analyze").addEventListener("click", () => runAnalysis(null));
   const st = $("#stopAi"); if (st) st.addEventListener("click", () => ui.ctl && ui.ctl.abort());
-  $("#logOnly").addEventListener("click", () => { logRound(); ui.notice = ""; ui.aiMsg = "Kolejka zapisana w historii."; save(); renderAll(); });
+  $("#logOnly").addEventListener("click", () => { logRound(); ui.notice = ""; if (state.lastPlan) state.lastPlan.undo = null; ui.aiMsg = "Kolejka zapisana w historii."; save(); renderAll(); });
 }
 
 function renderRec() {
@@ -456,7 +512,7 @@ function renderRec() {
   const nameOf = id => { const p = ev.players.find(x => x.id === id); return p ? p.name : "?"; };
   const xiByPos = ev.lineupOk ? POS.map(pos => [pos, ev.xi.map(id => ev.players.find(p => p.id === id)).filter(p => p.pos === pos)]) : null;
   const status = ev.errors.length
-    ? `<span class="pill bad">${ev.errors.length} ${ev.errors.length === 1 ? "problem" : "problemy"}</span>`
+    ? `<span class="pill bad">${countN(ev.errors.length, "problem", "problemy", "problemów")}</span>`
     : ev.warns.length ? `<span class="pill warn">Zgodne, sprawdź uwagi</span>` : `<span class="pill ok">Zgodne z zasadami</span>`;
   box.innerHTML = `<div class="card">
     <div class="rec-head"><h2>Plan na kolejkę ${esc(rec.forRound)}</h2>${status}</div>
@@ -490,9 +546,18 @@ function renderRec() {
     <div class="actions">
       <button class="btn primary" id="applyRec" ${ev.errors.length ? "disabled" : ""}>Zastosuj zmiany</button>
       ${ev.errors.length && aiReady() ? `<button class="btn" id="fixRec" ${ui.aiBusy ? "disabled" : ""}>Poproś AI o poprawkę</button>` : ""}
+      ${!ev.errors.length ? `<button class="btn" id="copyRec">Skopiuj plan</button>` : ""}
       <button class="btn ghost" id="dropRec">Odrzuć plan</button>
+      <span class="small muted" id="recMsg"></span>
     </div>
   </div>`;
+  const cp = $("#copyRec");
+  if (cp) cp.addEventListener("click", async () => {
+    let n = 0;
+    const after = applyEvaluated(cur, ev, state.rules, () => "tmp" + n++);
+    const ok = await copyText(planText({ forRound: rec.forRound, ev, after, hitCost: state.rules.hitCost }));
+    $("#recMsg").textContent = ok ? "Skopiowano." : "Nie udało się skopiować. Zastosuj plan – pełny tekst pojawi się w zakładce Skład.";
+  });
   box.querySelectorAll(".tr-in-fields input").forEach(inp => inp.addEventListener("change", () => {
     const t = rec.transfers[+inp.dataset.i], f = inp.dataset.f;
     if (f === "price") { t.in.price = inp.value === "" ? "" : r1(inp.value); t.in.priceConfirmed = true; }
@@ -544,12 +609,21 @@ function renderHistory() {
         ${(r.transfers || []).length ? `<div class="small">${r.transfers.map(t => `${esc(t.out)} → <b>${esc(t.in)}</b>`).join(" · ")}</div>` : `<div class="small muted">Bez transferów</div>`}
         ${r.chip || r.hits ? `<div class="small muted">${r.chip ? "Chip: " + esc((CHIPS.find(c => c.key === r.chip) || {}).label || r.chip) : ""}${r.chip && r.hits ? " · " : ""}${r.hits ? "−" + r.hits * state.rules.hitCost + " pkt za transfery" : ""}</div>` : ""}
         ${(r.playerPts || []).length ? `<div class="small muted">${r.playerPts.slice().sort((a, b) => b.pts - a.pts).slice(0, 3).map(p => esc(lastName(p.name)) + " " + p.pts).join(", ")}</div>` : ""}
+        <div class="actions"><button class="btn ghost small${ui.histDel === r.n ? " danger" : ""}" data-del="${r.n}" style="padding:2px 6px">${ui.histDel === r.n ? "Kliknij ponownie, żeby usunąć" : "Usuń wpis"}</button></div>
       </div>`).join("") : `<p class="muted">Tu pojawi się każda kolejka: punkty, transfery i użyte chipy. Zapisuje się po zastosowaniu planu albo przycisku „Zapisz punkty bez zmian”.</p>`}
     </div>
     <div class="card"><h2>Pierwotny skład</h2>
       ${state.original ? `<p class="small muted">Zapisany ${new Intl.DateTimeFormat("pl-PL", { day: "numeric", month: "long" }).format(new Date(state.original.savedAt || Date.now()))}. Przekreśleni zostali już sprzedani.</p>
       <div class="orig-list">${state.original.players.map(p => { const kept = cur && cur.players.some(c => norm(c.name) === norm(p.name)); return `<span class="${kept ? "" : "gone"}">${p.pos} · ${esc(p.name)}</span>`; }).join("")}</div>` : `<p class="muted">Jeszcze nie zapisano składu.</p>`}
     </div>`;
+  // Usuwa tylko wpis w historii; skład i chipy zostają bez zmian.
+  el.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+    const n = Number(b.dataset.del);
+    if (ui.histDel !== n) { ui.histDel = n; renderHistory(); return; }
+    ui.histDel = null;
+    state.rounds = state.rounds.filter(r => r.n !== n);
+    save(); renderHistory();
+  }));
 }
 
 /* ---------- rules tab ---------- */
@@ -586,10 +660,13 @@ function renderRules() {
       <div class="actions"><button class="btn" id="ruReset">Przywróć domyślne</button></div>
     </div>
     <div class="card"><h2>Kopia danych</h2>
-      <p class="small muted">Dane są zapisane w tej przeglądarce. Kopia pozwala przenieść je na inne urządzenie.</p>
-      <div class="actions"><button class="btn" id="exCopy">Skopiuj kopię</button><span class="small muted" id="exMsg"></span></div>
-      <label class="f" for="imText">Wczytaj kopię<textarea id="imText" placeholder="Wklej tutaj skopiowaną kopię danych"></textarea></label>
-      <div class="actions"><button class="btn" id="imBtn">${ui.importArm ? "Na pewno zastąpić obecne dane?" : "Wczytaj"}</button><span class="small muted" id="imMsg"></span></div>
+      <p class="small muted">Dane są zapisane w tej przeglądarce. Kopia pozwala przenieść je na inne urządzenie albo zabezpieczyć przed wyczyszczeniem przeglądarki.</p>
+      <div class="actions"><button class="btn" id="exFile">Pobierz plik</button><button class="btn" id="exCopy">Skopiuj jako tekst</button><span class="small muted" id="exMsg"></span></div>
+      <label class="f" for="imText">Wczytaj kopię<textarea id="imText" placeholder="Wklej tutaj skopiowaną kopię danych albo wybierz plik"></textarea></label>
+      <div class="actions">
+        <label class="btn" for="imFile">Wybierz plik</label><input type="file" id="imFile" accept="application/json,.json,.txt" hidden>
+        <button class="btn" id="imBtn">${ui.importArm ? "Na pewno zastąpić obecne dane?" : "Wczytaj"}</button><span class="small muted" id="imMsg"></span>
+      </div>
     </div>
     <div class="card"><h2>Zacznij od nowa</h2>
       <p class="small muted">Usuwa skład, pierwotny skład, historię i ustawienia gry. Klucz API zostaje.</p>
@@ -621,11 +698,32 @@ function renderRules() {
     try { navigator.clipboard.writeText(txt).then(() => { $("#exMsg").textContent = "Skopiowano."; }, () => fallbackCopy(txt)); }
     catch (e) { fallbackCopy(txt); }
   });
+  $("#exFile").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(state)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `doradca-fantasy-lm-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $("#exMsg").textContent = "Pobrano plik.";
+  });
+  $("#imFile").addEventListener("change", async e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try { $("#imText").value = await file.text(); }
+    catch (err) { $("#imMsg").textContent = "Nie udało się odczytać pliku."; return; }
+    ui.importArm = false; $("#imBtn").textContent = "Wczytaj";
+    $("#imMsg").textContent = "Plik gotowy. Kliknij „Wczytaj”, żeby zastąpić obecne dane.";
+  });
   $("#imBtn").addEventListener("click", () => {
     const raw = $("#imText").value.trim();
-    if (!raw) { $("#imMsg").textContent = "Najpierw wklej kopię."; return; }
+    if (!raw) { $("#imMsg").textContent = "Najpierw wklej kopię albo wybierz plik."; return; }
     let parsed;
-    try { parsed = JSON.parse(raw); } catch (e) { $("#imMsg").textContent = "To nie wygląda na kopię z tej aplikacji."; return; }
+    try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !("rules" in parsed || "current" in parsed)) {
+      $("#imMsg").textContent = "To nie wygląda na kopię z tej aplikacji."; return;
+    }
     if (!ui.importArm) { ui.importArm = true; renderRules(); $("#imText").value = raw; return; }
     ui.importArm = false; state = normalizeState(parsed); save(); renderAll(); switchTab("rules");
     $("#imMsg").textContent = "Wczytano.";
@@ -648,6 +746,7 @@ function switchTab(t) {
   document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
   ["squad", "round", "history", "rules"].forEach(k => { $("#tab-" + k).hidden = k !== t; });
   if (t !== "rules") { ui.resetArm = false; ui.importArm = false; ui.keyMsg = ""; }
+  ui.histDel = null;
   if (t === "squad") renderSquad();
   if (t === "history") renderHistory();
   if (t === "rules") renderRules();
@@ -656,3 +755,9 @@ function switchTab(t) {
 document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
 renderAll();
+// Odliczanie w nagłówku; gdy minie termin kolejki, odświeża całą stronę (np. koniec Free Hita).
+let lastDone = roundInfo(ROUNDS).done;
+setInterval(() => {
+  const done = renderHeader();
+  if (done !== lastDone) { lastDone = done; renderAll(); }
+}, 30000);

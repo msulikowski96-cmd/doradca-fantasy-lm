@@ -59,6 +59,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .mark{flex:none;width:40px;height:40px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:1.05rem;letter-spacing:.04em}
 .brand h1{font-size:1.5rem}
 .brand p{font-size:.85rem;color:var(--muted)}
+.brand p[data-urgent="1"]{color:var(--warn);font-weight:600}
 .sync{flex:none;font-size:.75rem;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
 .sync::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--muted)}
 .sync[data-s="saved"]::before{background:var(--good)}
@@ -171,6 +172,7 @@ details[open] summary{margin-bottom:8px}
 .xi-list{display:flex;flex-direction:column;gap:4px;font-size:.9rem}
 .xi-list b{font-family:var(--display);font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-size:.8rem;margin-right:6px}
 ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+.plan-text{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;font-family:var(--body);font-size:.9rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* history */
 .hist-item{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:4px}

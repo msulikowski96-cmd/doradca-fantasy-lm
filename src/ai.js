@@ -8,11 +8,39 @@ export class AiError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
+// Przy przeciążeniu i limicie zapytań ponawiamy sami, zanim pokażemy błąd.
+const RETRY_CODES = new Set(["overloaded", "rate_limited"]);
+const RETRY_DELAYS = [3000, 8000];
+
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) { reject(new AiError("cancelled", "Zatrzymano analizę.")); return; }
+    const t = setTimeout(() => { if (signal) signal.removeEventListener("abort", onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(t); reject(new AiError("cancelled", "Zatrzymano analizę.")); };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
- * Wysyła jedno zapytanie i zwraca tekst odpowiedzi.
+ * Wysyła zapytanie i zwraca tekst odpowiedzi. Przy przeciążeniu serwerów
+ * lub limicie zapytań ponawia (opóźnienia z `retryDelays` albo nagłówka retry-after).
  * images: tablica bloków {type:"image", source:{...}} z imageFileToBlock().
+ * onRetry(n): wywoływane przed n-tą ponowną próbą.
  */
-export async function callClaude({ apiKey, model, prompt, images = [], signal, maxTokens = 4096 }) {
+export async function callClaude(opts) {
+  const delays = opts.retryDelays || RETRY_DELAYS;
+  for (let attempt = 0; ; attempt++) {
+    try { return await callOnce(opts); }
+    catch (e) {
+      if (!RETRY_CODES.has(e && e.code) || attempt >= delays.length) throw e;
+      if (opts.onRetry) opts.onRetry(attempt + 1);
+      const fromHeader = e.retryAfter > 0 && e.retryAfter <= 30 ? e.retryAfter * 1000 : 0;
+      await wait(Math.max(delays[attempt], fromHeader), opts.signal);
+    }
+  }
+}
+
+async function callOnce({ apiKey, model, prompt, images = [], signal, maxTokens = 4096 }) {
   if (!apiKey) throw new AiError("no_key", "Dodaj klucz API Anthropic w zakładce Zasady.");
   const content = [...images, { type: "text", text: prompt }];
   let res;
@@ -35,7 +63,11 @@ export async function callClaude({ apiKey, model, prompt, images = [], signal, m
   }
   let body = null;
   try { body = await res.json(); } catch (e) { /* pusta odpowiedź */ }
-  if (!res.ok) throw apiError(res.status, body);
+  if (!res.ok) {
+    const err = apiError(res.status, body);
+    err.retryAfter = Number(res.headers && res.headers.get && res.headers.get("retry-after")) || 0;
+    throw err;
+  }
   const text = (body && Array.isArray(body.content) ? body.content : [])
     .filter(b => b.type === "text").map(b => b.text).join("\n").trim();
   if (!text) throw new AiError("empty", "AI nie zwróciło odpowiedzi. Spróbuj ponownie.");

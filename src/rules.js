@@ -6,6 +6,25 @@ import { POS, POS_PL, POS_ONE, CLUBS, ALIAS, CHIPS } from "./constants.js";
 export const r1 = n => Math.round(Number(n) * 10) / 10;
 export const fmt = n => (n !== "" && n !== null && n !== undefined && isFinite(Number(n))) ? r1(n).toFixed(1) : "–";
 
+// Polska odmiana po liczbie: plural(5, "transfer", "transfery", "transferów") -> "transferów".
+export function plural(n, one, few, many) {
+  n = Math.abs(Math.trunc(Number(n) || 0));
+  if (n === 1) return one;
+  const d = n % 10, h = n % 100;
+  return d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+}
+export const countN = (n, one, few, many) => `${n} ${plural(n, one, few, many)}`;
+
+// Czas do terminu: "2 dni 3 godz.", "5 godz. 10 min", "12 min"; null, gdy termin minął.
+export function timeLeft(deadline, now = Date.now()) {
+  const ms = new Date(deadline).getTime() - now;
+  if (!(ms > 0)) return null;
+  const m = Math.ceil(ms / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
+  if (d) return `${countN(d, "dzień", "dni", "dni")}${h ? ` ${h} godz.` : ""}`;
+  if (h) return `${h} godz.${min ? ` ${min} min` : ""}`;
+  return `${min} min`;
+}
+
 export function norm(s) {
   return String(s || "")
     .replace(/[øØ]/g, "o").replace(/[łŁ]/g, "l").replace(/[đĐ]/g, "d").replace(/ß/g, "ss").replace(/[æÆ]/g, "ae")
@@ -61,7 +80,7 @@ export function validateSquad(players, bank, rules) {
     if (counts[pos] !== rules.squad[pos]) errors.push(`${POS_PL[pos]}: ${counts[pos]} zamiast ${rules.squad[pos]}.`);
   });
   const empty = players.filter(p => !String(p.name).trim()).length;
-  if (empty) errors.push(`Brakuje nazwisk: ${empty} ${empty === 1 ? "miejsce" : "miejsc"} bez zawodnika.`);
+  if (empty) errors.push(`Brakuje nazwisk: ${countN(empty, "miejsce", "miejsca", "miejsc")} bez zawodnika.`);
   const seen = {};
   players.forEach(p => {
     const n = norm(p.name);
@@ -74,12 +93,14 @@ export function validateSquad(players, bank, rules) {
   Object.entries(byClub).forEach(([c, n]) => {
     if (n > rules.maxPerClub) errors.push(`Za dużo zawodników z klubu ${c}: ${n} (limit ${rules.maxPerClub}).`);
   });
-  const noClub = players.filter(p => String(p.name).trim() && !p.club).length;
-  if (noClub) warns.push(`${noClub} zawodnik(ów) bez klubu – limit na klub nie jest dla nich sprawdzany.`);
+  const named = players.filter(p => String(p.name).trim());
+  const names = list => list.map(p => lastName(p.name)).join(", ");
+  const noClub = named.filter(p => !p.club);
+  if (noClub.length) warns.push(`Bez klubu: ${names(noClub)}. Limit na klub nie jest dla nich sprawdzany.`);
   const unknown = [...new Set(players.filter(p => p.club && !CLUBS.includes(p.club)).map(p => p.club))];
   if (unknown.length) warns.push(`Nieznany klub: ${unknown.join(", ")}. Sprawdź, czy gra w fazie ligowej LM.`);
-  const noPrice = players.filter(p => String(p.name).trim() && !isFinite(parseFloat(p.price))).length;
-  if (noPrice) errors.push(`Brak ceny u ${noPrice} zawodnik(ów).`);
+  const noPrice = named.filter(p => !isFinite(parseFloat(p.price)));
+  if (noPrice.length) errors.push(`Brak ceny: ${names(noPrice)}.`);
   if (isFinite(bank) && bank < -0.05) errors.push(`Przekroczony budżet o ${fmt(-bank)} M€.`);
   return { errors, warns, counts };
 }
@@ -211,7 +232,7 @@ export function evalRec(rec, ctx) {
   if (chip && !chips[chip]) errors.push(`Chip ${CHIPS.find(c => c.key === chip).label} został już wykorzystany.`);
   const unlimited = chip === "wildcard" || chip === "freehit";
   const hits = unlimited ? 0 : Math.max(0, list.length - free);
-  if (hits) warns.push(`${hits} transfer(y) ponad darmowe: −${hits * rules.hitCost} pkt.`);
+  if (hits) warns.push(`${countN(hits, "transfer", "transfery", "transferów")} ponad darmowe: −${hits * rules.hitCost} pkt.`);
 
   const xiIds = [...new Set((rec.startingXI || []).map(n => findByName(players, n)).filter(Boolean).map(p => p.id))];
   const lineupOk = xiIds.length === 11 && lineupProblems(players, xiIds, rules).length === 0;
@@ -258,6 +279,29 @@ export function applyEvaluated(cur, ev, rules, newId) {
   let vice = ev.vice ? mapId(ev.vice) : viaSwap(cur.vice);
   if (!xi.includes(vice) || vice === captain) vice = pickCaptain(players, xi, captain);
   return { players, bank: ev.bank, xi, bench, captain, vice };
+}
+
+/**
+ * Plan jako zwykły tekst do skopiowania (żeby przepisać go w Sofascore).
+ * after — wynik applyEvaluated(); ev — wynik evalRec().
+ */
+export function planText({ forRound, ev, after, hitCost }) {
+  const byId = id => after.players.find(p => p.id === id);
+  const nm = id => { const p = byId(id); return p ? p.name : "?"; };
+  const lines = [`Plan na kolejkę ${forRound}`];
+  if (ev.list.length) {
+    lines.push(`Transfery (${ev.list.length}):`);
+    ev.list.forEach((t, i) => lines.push(`${i + 1}. ${t.out.name} → ${t.inn.name} (${t.inn.club || "klub ?"}, ${fmt(t.inn.price)} M€)`));
+  } else lines.push("Transfery: brak");
+  const chip = ev.chip ? CHIPS.find(c => c.key === ev.chip) : null;
+  if (chip) lines.push(`Chip: ${chip.label}`);
+  lines.push(`Kapitan: ${nm(after.captain)}${after.vice ? ` · Wicekapitan: ${nm(after.vice)}` : ""}`);
+  const xi = after.xi.map(byId).filter(Boolean);
+  lines.push("Jedenastka: " + POS.map(pos => xi.filter(p => p.pos === pos).map(p => lastName(p.name)).join(", ")).filter(Boolean).join("; "));
+  lines.push("Ławka: " + after.bench.map(id => lastName(nm(id))).join(", "));
+  lines.push(`Bank: ${fmt(after.bank)} M€`);
+  if (ev.hits) lines.push(`Minusowe punkty: −${ev.hits * hitCost}`);
+  return lines.join("\n");
 }
 
 // Kolejka, przed którą jesteśmy, liczona z terminarza (termin = pierwszy mecz − 30 min).
