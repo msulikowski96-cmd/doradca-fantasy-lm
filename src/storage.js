@@ -12,6 +12,8 @@ export function freshState() {
     v: 1, updatedAt: 0, rules: clone(DEFAULT_RULES), style: "balanced",
     chips: { wildcard: true, freehit: true, triplecaptain: true },
     original: null, current: null, rounds: [], draftRound: {}, pendingRec: null, freeHit: null,
+    // Ostatnio zastosowany plan: tekst do skopiowania i stan sprzed zmian (do cofnięcia).
+    lastPlan: null,
   };
 }
 

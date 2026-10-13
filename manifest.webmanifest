@@ -1,0 +1,14 @@
+{
+  "name": "Doradca Fantasy LM",
+  "short_name": "Fantasy LM",
+  "description": "Doradca do Sofascore Fantasy – Liga Mistrzów 2026/27.",
+  "lang": "pl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EDF1EA",
+  "theme_color": "#1C6842",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
