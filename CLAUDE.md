@@ -1,6 +1,6 @@
 # Doradca Fantasy LM
 
-Aplikacja w przeglądarce dla gry **Sofascore Fantasy – Liga Mistrzów 2026/27**. Użytkownik (Mati) wpisuje swój skład startowy (15 zawodników), a po każdej kolejce Claude proponuje transfery, kapitana, jedenastkę i chip. Aplikacja sama sprawdza, czy plan spełnia zasady gry, zanim pozwoli go zastosować.
+Aplikacja w przeglądarce dla gry **Sofascore Fantasy – Liga Mistrzów 2026/27**. Użytkownik (Mati) wpisuje swój skład startowy (15 zawodników), a po każdej kolejce AI (Claude albo Gemini – wybór w zakładce Zasady) proponuje transfery, kapitana, jedenastkę i chip. Aplikacja sama sprawdza, czy plan spełnia zasady gry, zanim pozwoli go zastosować.
 
 ## Komendy
 
@@ -13,11 +13,11 @@ Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 
 - `index.html` – szkielet strony, pasek zakładek. `manifest.webmanifest` + `icon.svg` – dodawanie do ekranu telefonu.
 - `styles.css` – tokeny kolorów (jasny i ciemny motyw), typografia, boisko.
-- `src/constants.js` – kluby fazy ligowej, terminarz (`ROUNDS`, `FIXTURES`), domyślne zasady, przykładowy skład, modele.
+- `src/constants.js` – kluby fazy ligowej, terminarz (`ROUNDS`, `FIXTURES`), domyślne zasady, przykładowy skład, modele (`MODELS`, każdy z polem `provider`) i dostawcy (`PROVIDERS`: pole klucza w ustawieniach, link do konsoli).
 - `src/rules.js` – **czyste funkcje** zasad: `validateSquad`, `lineupProblems`, `evalRec` (ocena planu AI), `applyEvaluated`, `planText` (plan jako tekst), dopasowanie nazwisk i klubów, `plural`/`countN` (polska odmiana), `timeLeft`. Bez DOM – testowane w `tests/`.
 - `src/prompt.js` – treść zapytań do Claude (analiza po kolejce, odczyt składu ze zrzutu).
-- `src/ai.js` – wywołanie Anthropic Messages API z przeglądarki (`fetch`, nagłówek `anthropic-dangerous-direct-browser-access`), ponawianie przy 429/529/5xx, parsowanie JSON, zmniejszanie zrzutów.
-- `src/storage.js` – stan w `localStorage`; klucz API w osobnym wpisie (nie trafia do eksportu). `lastPlan` = tekst ostatnio zastosowanego planu + `undo` (stan sprzed zmian; zerowany po ręcznej edycji składu).
+- `src/ai.js` – `callAi`/`askJson` z przeglądarki (`fetch`) do dwóch dostawców: Anthropic Messages API (nagłówek `anthropic-dangerous-direct-browser-access`) i Gemini API (`v1beta/models/{model}:generateContent`, nagłówek `x-goog-api-key`, `responseMimeType: application/json`, zapas `maxOutputTokens` na tokeny myślenia, części `thought: true` pomijane). Wspólne: ponawianie przy 429/529/5xx (bez czekania, gdy API każe czekać > 30 s), parsowanie JSON, zmniejszanie zrzutów (`imageFileToData` → `{ mediaType, data }`). Testy w `tests/ai.test.js` (mock `fetch`).
+- `src/storage.js` – stan w `localStorage`; ustawienia w osobnym wpisie: `model`, `apiKey` (Anthropic), `geminiKey` – nie trafiają do eksportu. `lastPlan` = tekst ostatnio zastosowanego planu + `undo` (stan sprzed zmian; zerowany po ręcznej edycji składu).
 - `src/app.js` – renderowanie zakładek (Skład, Kolejka, Historia, Zasady) i obsługa zdarzeń.
 - `claude-ai-artifact/doradca-fantasy-lm.html` – pierwotna wersja jako artifact na claude.ai (używa `window.claude` – `sample`, `db`). Edytuj tylko, jeśli użytkownik prosi o zmianę wersji na claude.ai.
 
@@ -41,4 +41,4 @@ Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 
 - `FIXTURES` zawiera tylko kolejkę 3. Kolejne kolejki użytkownik wkleja w aplikacji; możesz dopisać terminarz, jeśli masz go ze źródła (UEFA/Sofascore).
 - `ROUNDS`: godziny dla kolejek 4–8 są szacowane (`sure: false`).
-- Modele w `MODELS` (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`) – sprawdź w dokumentacji Anthropic, zanim je zmienisz.
+- Modele w `MODELS` (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `gemini-3.8-flash`) – sprawdź w dokumentacji Anthropic / Gemini API, zanim je zmienisz.
