@@ -15,7 +15,9 @@ export class AiError extends Error {
 
 // Przy przeciążeniu i limicie zapytań ponawiamy sami, zanim pokażemy błąd.
 const RETRY_CODES = new Set(["overloaded", "rate_limited"]);
-const RETRY_DELAYS = [3000, 8000];
+// Przeciążenia (503 „high demand”) bywają falami po kilkadziesiąt sekund; odpowiedź 503
+// przychodzi szybko i nie zużywa limitu, więc próbujemy kilka razy z rosnącą przerwą.
+const RETRY_DELAYS = [3000, 8000, 15000, 30000];
 // Dłuższe czekanie (np. wyczerpany dzienny limit) nie ma sensu – od razu pokazujemy błąd.
 const MAX_RETRY_WAIT_S = 30;
 

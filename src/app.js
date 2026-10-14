@@ -76,6 +76,9 @@ async function runAnalysis(fix) {
   const done = currentDone(), next = done + 1;
   const prompt = buildAnalysisPrompt(state, { done, next, free: freeNow(), fixtures: fixturesFor(next), hasImages: ui.roundImages.length > 0, fix });
   ui.aiBusy = true; ui.aiMsg = ""; ui.retry = 0; ui.ctl = new AbortController(); ui.started = Date.now();
+  // Analiza może trwać kilka minut; wygaszony ekran na telefonie zrywa połączenie.
+  let wakeLock = null;
+  try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { /* brak wsparcia albo niebezpieczny adres */ }
   renderRound();
   const tick = () => { const el = $("#aiTimer"); if (el) el.textContent = Math.round((Date.now() - ui.started) / 1000) + " s" + retryNote(); };
   ui.timer = setInterval(tick, 1000);
@@ -92,6 +95,7 @@ async function runAnalysis(fix) {
     ui.aiMsg = (e && e.message) || "Analiza się nie udała. Spróbuj ponownie.";
   } finally {
     clearInterval(ui.timer); ui.aiBusy = false; ui.ctl = null;
+    if (wakeLock) wakeLock.release().catch(() => {});
     renderRound();
     const box = $("#recBox");
     if (box && state.pendingRec && !ui.aiMsg) box.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
@@ -478,7 +482,7 @@ function renderRound() {
         ${ui.aiBusy ? `<button class="btn" id="stopAi">Zatrzymaj</button><span class="timer muted" id="aiTimer">${Math.round((Date.now() - ui.started) / 1000)} s${retryNote()}</span>` : ""}
         <button class="btn ghost" id="logOnly" ${ui.aiBusy ? "disabled" : ""}>Zapisz punkty bez zmian</button>
       </div>
-      ${ui.aiBusy ? `<p class="small muted">AI przegląda skład, zasady i terminarz. Zwykle trwa to od 20 s do 2 minut. Nie przełączaj aplikacji i nie blokuj ekranu – telefon może wtedy zerwać połączenie.</p>` : ""}
+      ${ui.aiBusy ? `<p class="small muted">AI przegląda skład, zasady i terminarz. Zwykle trwa to od 20 s do 2 minut, a przy dużym ruchu na serwerach nawet do 5 minut. Nie przełączaj aplikacji – telefon może wtedy zerwać połączenie.</p>` : ""}
       ${ui.aiMsg ? `<div class="notice">${esc(ui.aiMsg)}</div>` : ""}
     </div>
     <div id="recBox"></div>`;
