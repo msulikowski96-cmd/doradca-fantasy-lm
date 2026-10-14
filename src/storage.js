@@ -1,4 +1,4 @@
-// Stan aplikacji w localStorage. Klucz API trzymamy osobno, żeby nie trafił do eksportu.
+// Stan aplikacji w localStorage. Klucze API (Anthropic, Gemini) trzymamy osobno, żeby nie trafiły do eksportu.
 
 import { DEFAULT_RULES, MODELS } from "./constants.js";
 
@@ -43,9 +43,12 @@ export function saveState(state) {
 }
 
 export function loadSettings() {
-  const def = { apiKey: "", model: MODELS[0].id };
-  try { return Object.assign(def, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); }
-  catch (e) { return def; }
+  const def = { apiKey: "", geminiKey: "", model: MODELS[0].id };
+  let s;
+  try { s = Object.assign(def, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); }
+  catch (e) { s = def; }
+  if (!MODELS.some(m => m.id === s.model)) s.model = MODELS[0].id;
+  return s;
 }
 
 export function saveSettings(settings) {

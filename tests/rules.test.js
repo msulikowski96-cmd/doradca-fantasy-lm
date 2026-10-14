@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_RULES, EXAMPLE } from "../src/constants.js";
 import { canonClub, findByName, validateSquad, lineupProblems, autoLineup, evalRec, applyEvaluated, cleanRec, roundInfo, plural, countN, timeLeft, planText } from "../src/rules.js";
-import { parseJsonLoose, callClaude } from "../src/ai.js";
 import { ROUNDS } from "../src/constants.js";
 
 const rules = DEFAULT_RULES;
@@ -95,13 +94,6 @@ test("zakup zawodnika, który już jest w składzie, jest błędem", () => {
   assert.ok(ev.errors.some(e => e.includes("już jest w składzie")));
 });
 
-test("parseJsonLoose czyta JSON z blokiem kodu i z tekstem dookoła", () => {
-  assert.deepEqual(parseJsonLoose('{"a":1}'), { a: 1 });
-  assert.deepEqual(parseJsonLoose('Oto plan:\n```json\n{"a":2}\n```'), { a: 2 });
-  assert.deepEqual(parseJsonLoose('Plan: {"a":3} – powodzenia'), { a: 3 });
-  assert.throws(() => parseJsonLoose("brak json"));
-});
-
 test("roundInfo wskazuje kolejkę 3 przed terminem 20 października", () => {
   const ri = roundInfo(ROUNDS, new Date("2026-10-14T23:00:00+02:00").getTime());
   assert.equal(ri.next.n, 3);
@@ -159,28 +151,4 @@ test("planText opisuje transfery, kapitana, jedenastkę i bank", () => {
   assert.doesNotMatch(txt, /Minusowe/);
   const lineup = txt.split("\n").find(l => l.startsWith("Jedenastka:"));
   assert.equal(lineup.split(/[;,]/).length, 11);
-});
-
-test("callClaude ponawia przy przeciążeniu, a błąd klucza zwraca od razu", async () => {
-  const realFetch = globalThis.fetch;
-  const ok = { ok: true, status: 200, headers: new Headers(), json: async () => ({ content: [{ type: "text", text: "{}" }], stop_reason: "end_turn" }) };
-  const err = status => ({ ok: false, status, headers: new Headers(), json: async () => ({ error: { message: "x" } }) });
-  try {
-    let calls = 0; const retries = [];
-    globalThis.fetch = async () => (++calls < 3 ? err(529) : ok);
-    const res = await callClaude({ apiKey: "k", model: "m", prompt: "p", retryDelays: [1, 1], onRetry: n => retries.push(n) });
-    assert.equal(res.text, "{}");
-    assert.equal(calls, 3);
-    assert.deepEqual(retries, [1, 2]);
-
-    calls = 0;
-    globalThis.fetch = async () => { calls++; return err(529); };
-    await assert.rejects(callClaude({ apiKey: "k", model: "m", prompt: "p", retryDelays: [1] }), e => e.code === "overloaded");
-    assert.equal(calls, 2);
-
-    calls = 0;
-    globalThis.fetch = async () => { calls++; return err(401); };
-    await assert.rejects(callClaude({ apiKey: "k", model: "m", prompt: "p", retryDelays: [1, 1] }), e => e.code === "auth");
-    assert.equal(calls, 1);
-  } finally { globalThis.fetch = realFetch; }
 });

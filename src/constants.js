@@ -96,8 +96,24 @@ export const STYLES = [
   { key: "aggressive", label: "Ofensywny", desc: "Goni punkty, chętniej zmienia zawodników i używa chipów." },
 ];
 
+// Dostawcy AI. keyField = pole w ustawieniach z kluczem tego dostawcy.
+export const PROVIDERS = {
+  anthropic: {
+    label: "Claude (Anthropic)", keyField: "apiKey", keyPrefix: "sk-ant-", placeholder: "sk-ant-…",
+    keyUrl: "https://console.anthropic.com/settings/keys", keyHost: "console.anthropic.com",
+    note: "API jest płatne osobno od subskrypcji Claude.",
+  },
+  gemini: {
+    label: "Gemini (Google)", keyField: "geminiKey", keyPrefix: "", placeholder: "AIza…",
+    keyUrl: "https://aistudio.google.com/apikey", keyHost: "aistudio.google.com",
+    note: "Klucz założysz za darmo w Google AI Studio. Darmowy pakiet ma dzienny limit zapytań, a Google może wykorzystywać przesłane w nim dane do ulepszania swoich usług.",
+  },
+};
+
 export const MODELS = [
-  { id: "claude-sonnet-5-5", label: "Sonnet 5.5 (zalecany)" },
-  { id: "claude-opus-5-5", label: "Opus 5.5 (dokładniejszy, droższy)" },
-  { id: "claude-haiku-5-5", label: "Haiku 5.5 (najtańszy)" },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5 (zalecany)", provider: "anthropic" },
+  { id: "claude-opus-5-5", label: "Opus 5.5 (dokładniejszy, droższy)", provider: "anthropic" },
+  { id: "claude-haiku-5-5", label: "Haiku 5.5 (najtańszy)", provider: "anthropic" },
+  // Identyfikator z dokumentacji Gemini API (model GA, październik 2026).
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "gemini" },
 ];

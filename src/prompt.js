@@ -1,4 +1,4 @@
-// Treść zapytań do Claude. Czyste funkcje — łatwo je zmieniać i testować.
+// Treść zapytań do AI (Claude lub Gemini). Czyste funkcje — łatwo je zmieniać i testować.
 
 import { CLUBS, CHIPS, STYLES } from "./constants.js";
 import { fmt, norm } from "./rules.js";

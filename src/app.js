@@ -1,13 +1,13 @@
 // Interfejs aplikacji: renderowanie zakładek i obsługa zdarzeń.
 // Logika zasad jest w rules.js, treść zapytań w prompt.js, połączenie z API w ai.js.
 
-import { POS, POS_PL, POS_ONE, CLUBS, SHORT, CHIPS, DEFAULT_RULES, ROUNDS, FIXTURES, EXAMPLE, STYLES, MODELS } from "./constants.js";
+import { POS, POS_PL, POS_ONE, CLUBS, SHORT, CHIPS, DEFAULT_RULES, ROUNDS, FIXTURES, EXAMPLE, STYLES, MODELS, PROVIDERS } from "./constants.js";
 import {
   r1, fmt, norm, canonClub, normPos, lastName, validateSquad, lineupProblems, autoLineup, benchOrder,
   pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText,
 } from "./rules.js";
 import { buildAnalysisPrompt, SQUAD_IMPORT_PROMPT } from "./prompt.js";
-import { askJson, imageFileToBlock } from "./ai.js";
+import { askJson, imageFileToData } from "./ai.js";
 import { freshState, normalizeState, loadState, saveState, loadSettings, saveSettings } from "./storage.js";
 
 /* ---------- helpers ---------- */
@@ -47,7 +47,12 @@ function save() {
 let draftTimer = null;
 function draftSave() { clearTimeout(draftTimer); draftTimer = setTimeout(save, 500); }
 
-const aiReady = () => !!settings.apiKey;
+// Dostawca AI wynika z wybranego modelu; każdy ma własny klucz w ustawieniach.
+const curModel = () => MODELS.find(m => m.id === settings.model) || MODELS[0];
+const curProvider = () => PROVIDERS[curModel().provider];
+const curKey = () => settings[curProvider().keyField] || "";
+const aiOpts = () => ({ provider: curModel().provider, apiKey: curKey(), model: curModel().id });
+const aiReady = () => !!curKey();
 const freeNow = () => {
   const d = state.draftRound;
   return (d.free !== undefined && d.free !== "") ? Number(d.free) : state.rules.freeTransfers;
@@ -75,9 +80,9 @@ async function runAnalysis(fix) {
   const tick = () => { const el = $("#aiTimer"); if (el) el.textContent = Math.round((Date.now() - ui.started) / 1000) + " s" + retryNote(); };
   ui.timer = setInterval(tick, 1000);
   try {
-    const images = await Promise.all(ui.roundImages.map(f => imageFileToBlock(f)));
+    const images = await Promise.all(ui.roundImages.map(f => imageFileToData(f)));
     const res = await askJson({
-      apiKey: settings.apiKey, model: settings.model, prompt, images, signal: ui.ctl.signal, maxTokens: 6000,
+      ...aiOpts(), prompt, images, signal: ui.ctl.signal, maxTokens: 6000,
       onRetry: n => { ui.retry = n; tick(); },
     });
     if (!res || typeof res !== "object" || Array.isArray(res)) throw { message: "AI zwróciło odpowiedź w złym formacie. Spróbuj jeszcze raz." };
@@ -97,10 +102,10 @@ async function importScreenshot(file) {
   if (!aiReady() || ui.importBusy || !file) return;
   ui.importBusy = true; ui.importMsg = "Odczytuję zrzut ekranu…"; renderSquad();
   try {
-    const image = await imageFileToBlock(file);
+    const image = await imageFileToData(file);
     const res = await askJson({
-      apiKey: settings.apiKey, model: settings.model, prompt: SQUAD_IMPORT_PROMPT, images: [image], maxTokens: 2048,
-      onRetry: n => { ui.importMsg = `Serwery Anthropic są zajęte. Ponawiam (próba ${n + 1})…`; renderSquad(); },
+      ...aiOpts(), prompt: SQUAD_IMPORT_PROMPT, images: [image], maxTokens: 2048,
+      onRetry: n => { ui.importMsg = `Serwery AI są zajęte. Ponawiam (próba ${n + 1})…`; renderSquad(); },
     });
     const list = Array.isArray(res && res.players) ? res.players : [];
     if (!list.length) throw { message: "Nie znalazłem zawodników na tym zrzucie. Spróbuj zrzutu widoku boiska." };
@@ -467,7 +472,7 @@ function renderRound() {
       <div class="f" style="font-size:.85rem;font-weight:600;color:var(--muted)">Styl zmian
         <div class="seg" role="radiogroup" style="margin-top:4px">${STYLES.map(s => `<label for="st-${s.key}"><input type="radio" name="style" id="st-${s.key}" value="${s.key}" ${state.style === s.key ? "checked" : ""}>${s.label}</label>`).join("")}</div>
         <span class="small muted" style="font-weight:400;margin-top:4px">${esc((STYLES.find(s => s.key === state.style) || STYLES[1]).desc)}</span></div>
-      ${!aiReady() ? `<div class="notice">Dodaj klucz API Anthropic w zakładce Zasady, żeby włączyć analizę AI. Punkty możesz zapisywać bez niego.</div>` : ""}
+      ${!aiReady() ? `<div class="notice">Dodaj klucz API (Claude albo Gemini) w zakładce Zasady, żeby włączyć analizę AI. Punkty możesz zapisywać bez niego.</div>` : ""}
       <div class="actions">
         <button class="btn primary" id="analyze" ${!aiReady() || ui.aiBusy || next > 8 ? "disabled" : ""}>${ui.aiBusy ? "Analizuję…" : state.pendingRec ? "Analizuj ponownie" : "Analizuj z AI"}</button>
         ${ui.aiBusy ? `<button class="btn" id="stopAi">Zatrzymaj</button><span class="timer muted" id="aiTimer">${Math.round((Date.now() - ui.started) / 1000)} s${retryNote()}</span>` : ""}
@@ -629,18 +634,18 @@ function renderHistory() {
 /* ---------- rules tab ---------- */
 function renderRules() {
   const el = $("#tab-rules"), r = state.rules;
-  const masked = settings.apiKey ? settings.apiKey.slice(0, 10) + "…" + settings.apiKey.slice(-4) : "";
+  const prov = curProvider(), key = curKey();
+  const masked = key ? key.slice(0, 8) + "…" + key.slice(-4) : "";
   el.innerHTML = `
-    <div class="card"><h2>Klucz API Anthropic</h2>
-      <p class="small muted">Analiza AI używa Twojego klucza z <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. API jest płatne osobno od subskrypcji Claude. Klucz zostaje tylko w tej przeglądarce i nie trafia do kopii danych.</p>
-      ${settings.apiKey ? `<p class="small">Zapisany klucz: <span class="num">${esc(masked)}</span></p>` : ""}
-      <div class="row">
-        <label class="f" for="apiKey">${settings.apiKey ? "Nowy klucz" : "Klucz"}<input type="password" id="apiKey" autocomplete="off" placeholder="sk-ant-…"></label>
-        <label class="f" for="apiModel">Model<select id="apiModel">${MODELS.map(m => `<option value="${m.id}" ${settings.model === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label>
-      </div>
+    <div class="card"><h2>Model AI i klucz API</h2>
+      <div class="row"><label class="f" for="apiModel">Model<select id="apiModel">${Object.entries(PROVIDERS).map(([pk, p]) =>
+        `<optgroup label="${esc(p.label)}">${MODELS.filter(m => m.provider === pk).map(m => `<option value="${m.id}" ${settings.model === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
+      <p class="small muted">${esc(prov.label)}: klucz z <a href="${prov.keyUrl}" target="_blank" rel="noopener">${prov.keyHost}</a>. ${esc(prov.note)} Klucz zostaje tylko w tej przeglądarce i nie trafia do kopii danych.</p>
+      ${key ? `<p class="small">Zapisany klucz: <span class="num">${esc(masked)}</span></p>` : ""}
+      <div class="row"><label class="f" for="apiKey">${key ? "Nowy klucz" : "Klucz"} ${esc(prov.label)}<input type="password" id="apiKey" autocomplete="off" placeholder="${esc(prov.placeholder)}"></label></div>
       <div class="actions">
         <button class="btn primary" id="keySave">Zapisz klucz</button>
-        ${settings.apiKey ? `<button class="btn danger" id="keyDel">Usuń klucz</button>` : ""}
+        ${key ? `<button class="btn danger" id="keyDel">Usuń klucz</button>` : ""}
         <span class="small muted">${esc(ui.keyMsg)}</span>
       </div>
     </div>
@@ -669,24 +674,24 @@ function renderRules() {
       </div>
     </div>
     <div class="card"><h2>Zacznij od nowa</h2>
-      <p class="small muted">Usuwa skład, pierwotny skład, historię i ustawienia gry. Klucz API zostaje.</p>
+      <p class="small muted">Usuwa skład, pierwotny skład, historię i ustawienia gry. Klucze API zostają.</p>
       <div class="actions"><button class="btn danger" id="resetAll">${ui.resetArm ? "Kliknij ponownie, żeby usunąć wszystko" : "Usuń wszystkie dane"}</button></div>
     </div>`;
 
   $("#keySave").addEventListener("click", () => {
     const k = $("#apiKey").value.trim();
-    settings.model = $("#apiModel").value;
-    if (k) {
-      if (!k.startsWith("sk-ant-")) { ui.keyMsg = "To nie wygląda na klucz Anthropic (zaczyna się od sk-ant-)."; renderRules(); return; }
-      settings.apiKey = k;
-    }
+    if (!k) { ui.keyMsg = "Najpierw wklej klucz."; renderRules(); return; }
+    if (prov.keyPrefix && !k.startsWith(prov.keyPrefix)) { ui.keyMsg = `To nie wygląda na klucz ${prov.label} (zaczyna się od ${prov.keyPrefix}).`; renderRules(); return; }
+    if (!prov.keyPrefix && k.startsWith("sk-")) { ui.keyMsg = `To wygląda na klucz innego dostawcy. Wklej klucz z ${prov.keyHost}.`; renderRules(); return; }
+    settings[prov.keyField] = k;
     saveSettings(settings);
-    ui.keyMsg = k ? "Klucz zapisany." : "Model zapisany.";
+    ui.keyMsg = "Klucz zapisany.";
     renderAll(); switchTab("rules");
   });
-  $("#apiModel").addEventListener("change", e => { settings.model = e.target.value; saveSettings(settings); });
+  // Zmiana modelu może zmienić dostawcę i klucz, więc odświeżamy wszystkie zakładki.
+  $("#apiModel").addEventListener("change", e => { settings.model = e.target.value; saveSettings(settings); ui.keyMsg = ""; renderAll(); switchTab("rules"); });
   const kd = $("#keyDel");
-  if (kd) kd.addEventListener("click", () => { settings.apiKey = ""; saveSettings(settings); ui.keyMsg = "Klucz usunięty."; renderAll(); switchTab("rules"); });
+  if (kd) kd.addEventListener("click", () => { settings[prov.keyField] = ""; saveSettings(settings); ui.keyMsg = "Klucz usunięty."; renderAll(); switchTab("rules"); });
 
   const num = (id, key) => $("#" + id).addEventListener("change", e => { const v = parseFloat(e.target.value); if (isFinite(v)) { r[key] = v; save(); } });
   num("ruBudget", "budget"); num("ruClub", "maxPerClub"); num("ruFree", "freeTransfers"); num("ruHit", "hitCost");

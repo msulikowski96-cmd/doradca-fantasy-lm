@@ -15,12 +15,12 @@ Bez instalowania zależności i bez budowania.
 
 ## Klucz API
 
-Analiza AI korzysta z **Anthropic API** na Twoim kluczu:
+Analiza AI działa na Twoim kluczu – do wyboru **Claude (Anthropic)** albo **Gemini (Google)**. W aplikacji: zakładka **Zasady → Model AI i klucz API**; najpierw wybierz model, potem wklej klucz tego dostawcy.
 
-1. Załóż klucz na [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) i doładuj konto API (rozliczane osobno od subskrypcji Claude).
-2. W aplikacji: zakładka **Zasady → Klucz API Anthropic**.
+- **Gemini 3.8 Flash** – klucz założysz za darmo na [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Darmowy pakiet ma dzienny limit zapytań (aktualny limit widać w AI Studio), a Google może wykorzystywać dane z darmowego pakietu do ulepszania swoich usług. Po włączeniu płatności w AI Studio limity rosną.
+- **Claude (Sonnet, Opus, Haiku 5.5)** – klucz z [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys); konto API trzeba doładować (rozliczane osobno od subskrypcji Claude). Jedna analiza na Sonnet 5.5 to zwykle kilka–kilkanaście groszy, więcej przy kilku zrzutach ekranu.
 
-Klucz zostaje tylko w Twojej przeglądarce (`localStorage`) i nie trafia do kopii danych. Jedna analiza na Sonnet 5.5 to zwykle kilka–kilkanaście groszy, więcej przy kilku zrzutach ekranu.
+Klucze zostają tylko w Twojej przeglądarce (`localStorage`) i nie trafiają do kopii danych. Możesz zapisać oba i przełączać model w dowolnej chwili.
 
 ## Jak używać
 
