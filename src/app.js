@@ -7,7 +7,7 @@ import {
   pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText,
 } from "./rules.js";
 import { buildAnalysisPrompt, SQUAD_IMPORT_PROMPT } from "./prompt.js";
-import { askJson, imageFileToData } from "./ai.js";
+import { askJson, imageFileToData, checkAi, keyProblem } from "./ai.js";
 import { freshState, normalizeState, loadState, saveState, loadSettings, saveSettings } from "./storage.js";
 
 /* ---------- helpers ---------- */
@@ -478,7 +478,7 @@ function renderRound() {
         ${ui.aiBusy ? `<button class="btn" id="stopAi">Zatrzymaj</button><span class="timer muted" id="aiTimer">${Math.round((Date.now() - ui.started) / 1000)} s${retryNote()}</span>` : ""}
         <button class="btn ghost" id="logOnly" ${ui.aiBusy ? "disabled" : ""}>Zapisz punkty bez zmian</button>
       </div>
-      ${ui.aiBusy ? `<p class="small muted">AI przegląda skład, zasady i terminarz. Zwykle trwa to od 20 s do 2 minut.</p>` : ""}
+      ${ui.aiBusy ? `<p class="small muted">AI przegląda skład, zasady i terminarz. Zwykle trwa to od 20 s do 2 minut. Nie przełączaj aplikacji i nie blokuj ekranu – telefon może wtedy zerwać połączenie.</p>` : ""}
       ${ui.aiMsg ? `<div class="notice">${esc(ui.aiMsg)}</div>` : ""}
     </div>
     <div id="recBox"></div>`;
@@ -645,9 +645,10 @@ function renderRules() {
       <div class="row"><label class="f" for="apiKey">${key ? "Nowy klucz" : "Klucz"} ${esc(prov.label)}<input type="password" id="apiKey" autocomplete="off" placeholder="${esc(prov.placeholder)}"></label></div>
       <div class="actions">
         <button class="btn primary" id="keySave">Zapisz klucz</button>
+        ${key ? `<button class="btn" id="keyCheck">Sprawdź połączenie</button>` : ""}
         ${key ? `<button class="btn danger" id="keyDel">Usuń klucz</button>` : ""}
-        <span class="small muted">${esc(ui.keyMsg)}</span>
       </div>
+      ${ui.keyMsg ? `<p class="small" id="keyMsg">${esc(ui.keyMsg)}</p>` : ""}
     </div>
     <div class="card"><h2>Zasady gry</h2>
       <p class="small muted">Według tych zasad aplikacja sprawdza każdy plan AI. Budżet 100 M€ i limit 3 zawodników z klubu pochodzą z Sofascore. Liczbę darmowych transferów i koszt dodatkowego sprawdź w regulaminie w aplikacji i popraw, jeśli się różnią.</p>
@@ -679,8 +680,10 @@ function renderRules() {
     </div>`;
 
   $("#keySave").addEventListener("click", () => {
-    const k = $("#apiKey").value.trim();
+    // Klucze nie mają spacji ani złamań linii – usuwamy je, bo często dochodzą przy kopiowaniu na telefonie.
+    const k = $("#apiKey").value.replace(/\s+/g, "");
     if (!k) { ui.keyMsg = "Najpierw wklej klucz."; renderRules(); return; }
+    if (keyProblem(k)) { ui.keyMsg = keyProblem(k); renderRules(); return; }
     if (prov.keyPrefix && !k.startsWith(prov.keyPrefix)) { ui.keyMsg = `To nie wygląda na klucz ${prov.label} (zaczyna się od ${prov.keyPrefix}).`; renderRules(); return; }
     if (!prov.keyPrefix && k.startsWith("sk-")) { ui.keyMsg = `To wygląda na klucz innego dostawcy. Wklej klucz z ${prov.keyHost}.`; renderRules(); return; }
     settings[prov.keyField] = k;
@@ -690,6 +693,17 @@ function renderRules() {
   });
   // Zmiana modelu może zmienić dostawcę i klucz, więc odświeżamy wszystkie zakładki.
   $("#apiModel").addEventListener("change", e => { settings.model = e.target.value; saveSettings(settings); ui.keyMsg = ""; renderAll(); switchTab("rules"); });
+  const kc = $("#keyCheck");
+  if (kc) kc.addEventListener("click", async () => {
+    kc.disabled = true; kc.textContent = "Sprawdzam…";
+    try {
+      const name = await checkAi(aiOpts());
+      ui.keyMsg = `Połączenie działa: klucz jest poprawny, a model ${name} jest dostępny.`;
+    } catch (e) {
+      ui.keyMsg = (e && e.message) || "Sprawdzenie się nie udało.";
+    }
+    renderRules();
+  });
   const kd = $("#keyDel");
   if (kd) kd.addEventListener("click", () => { settings[prov.keyField] = ""; saveSettings(settings); ui.keyMsg = "Klucz usunięty."; renderAll(); switchTab("rules"); });
 

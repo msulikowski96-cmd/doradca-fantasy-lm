@@ -51,31 +51,69 @@ export async function callAi(opts) {
 
 const PROVIDER_NAME = { anthropic: "Anthropic", gemini: "Google" };
 
-async function callOnce(opts) {
-  const provider = opts.provider === "gemini" ? "gemini" : "anthropic";
-  if (!opts.apiKey) throw new AiError("no_key", "Dodaj klucz API w zakładce Zasady.");
-  const req = provider === "gemini" ? geminiRequest(opts) : anthropicRequest(opts);
+// Klucze API to same znaki ASCII bez spacji. Inny znak (np. „…”, złamanie linii, polska litera
+// po wklejeniu) sprawia, że przeglądarka odrzuca nagłówek, zanim zapytanie wyjdzie z telefonu.
+export const keyProblem = key => /[^\x21-\x7E]/.test(String(key || ""))
+  ? "Klucz API zawiera niedozwolony znak (spację, złamanie linii, „…” albo polską literę). Skopiuj go ponownie i wklej w zakładce Zasady."
+  : "";
+
+/** Wysyła zapytanie i zwraca sparsowane body; błędy HTTP i sieci zamienia na AiError. */
+async function send(provider, { url, method = "POST", headers, body }, apiKey, signal) {
+  if (!apiKey) throw new AiError("no_key", "Dodaj klucz API w zakładce Zasady.");
+  const bad = keyProblem(apiKey);
+  if (bad) throw new AiError("auth", bad);
   let res;
   try {
-    res = await fetch(req.url, { method: "POST", signal: opts.signal, headers: req.headers, body: JSON.stringify(req.body) });
+    res = await fetch(url, { method, signal, headers, body: body ? JSON.stringify(body) : undefined });
   } catch (e) {
     if (e && e.name === "AbortError") throw cancelled();
-    throw new AiError("network", `Brak połączenia z API ${PROVIDER_NAME[provider]}. Sprawdź internet i spróbuj ponownie.`);
+    const detail = e && e.message ? ` Szczegóły: ${e.message}` : "";
+    throw new AiError("network", `Zapytanie do API ${PROVIDER_NAME[provider]} nie doszło do serwera. Sprawdź internet, nie przełączaj aplikacji w trakcie analizy i użyj „Sprawdź połączenie” w zakładce Zasady.${detail}`);
   }
-  let body = null;
-  try { body = await res.json(); } catch (e) { /* pusta odpowiedź */ }
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* pusta odpowiedź */ }
   if (!res.ok) {
-    if (provider === "gemini") throw geminiError(res.status, body);
-    const err = anthropicError(res.status, body);
+    if (provider === "gemini") throw geminiError(res.status, data);
+    const err = anthropicError(res.status, data);
     err.retryAfter = Number(res.headers && res.headers.get && res.headers.get("retry-after")) || 0;
     throw err;
   }
+  return data;
+}
+
+async function callOnce(opts) {
+  const provider = opts.provider === "gemini" ? "gemini" : "anthropic";
+  const req = provider === "gemini" ? geminiRequest(opts) : anthropicRequest(opts);
+  const body = await send(provider, req, opts.apiKey, opts.signal);
   const out = provider === "gemini" ? geminiText(body) : anthropicText(body);
   if (!out.text) throw new AiError("empty", "AI nie zwróciło odpowiedzi. Spróbuj ponownie.");
   return out;
 }
 
+/**
+ * Sprawdza klucz, sieć i dostęp do modelu jednym lekkim zapytaniem o model
+ * (bez generowania odpowiedzi). Zwraca nazwę modelu albo rzuca AiError.
+ */
+export async function checkAi({ provider, apiKey, model, signal }) {
+  const p = provider === "gemini" ? "gemini" : "anthropic";
+  const req = p === "gemini"
+    ? { url: GEMINI_URL + encodeURIComponent(model), method: "GET", headers: { "x-goog-api-key": apiKey } }
+    : { url: "https://api.anthropic.com/v1/models/" + encodeURIComponent(model), method: "GET", headers: anthropicHeaders(apiKey) };
+  const body = await send(p, req, apiKey, signal);
+  return (body && (body.displayName || body.display_name)) || model;
+}
+
 /* ---------- Anthropic ---------- */
+
+function anthropicHeaders(apiKey) {
+  return {
+    "content-type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": ANTHROPIC_VERSION,
+    // Wymagane przez API przy wywołaniu bezpośrednio z przeglądarki (CORS).
+    "anthropic-dangerous-direct-browser-access": "true",
+  };
+}
 
 function anthropicRequest({ apiKey, model, prompt, images = [], maxTokens = 4096 }) {
   const content = [
@@ -84,13 +122,7 @@ function anthropicRequest({ apiKey, model, prompt, images = [], maxTokens = 4096
   ];
   return {
     url: ANTHROPIC_URL,
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": ANTHROPIC_VERSION,
-      // Wymagane przez API przy wywołaniu bezpośrednio z przeglądarki (CORS).
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers: anthropicHeaders(apiKey),
     body: { model, max_tokens: maxTokens, messages: [{ role: "user", content }] },
   };
 }

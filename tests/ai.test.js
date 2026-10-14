@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseJsonLoose, callAi, askJson } from "../src/ai.js";
+import { parseJsonLoose, callAi, askJson, checkAi, keyProblem } from "../src/ai.js";
 import { MODELS, PROVIDERS } from "../src/constants.js";
 
 // Podmienia globalny fetch na czas testu; `reply(call)` zwraca odpowiedź dla kolejnych wywołań.
 async function withFetch(reply, fn) {
   const real = globalThis.fetch;
   const calls = [];
-  globalThis.fetch = async (url, init) => { const c = { url, init, body: JSON.parse(init.body) }; calls.push(c); return reply(c, calls.length); };
+  globalThis.fetch = async (url, init) => { const c = { url, init, body: init.body ? JSON.parse(init.body) : null }; calls.push(c); return reply(c, calls.length); };
   try { await fn(calls); } finally { globalThis.fetch = real; }
 }
 const res = (status, body) => ({ ok: status < 400, status, headers: new Headers(), json: async () => body });
@@ -94,5 +94,33 @@ test("Gemini: zły klucz bez ponawiania, dzienny limit bez czekania, przeciąże
     const out = await callAi({ ...gem, retryDelays: [1, 1] });
     assert.equal(out.text, "{}");
     assert.equal(calls.length, 2);
+  });
+});
+
+test("klucz z niedozwolonym znakiem daje jasny błąd, zanim zapytanie wyjdzie", async () => {
+  assert.equal(keyProblem("AIzaSy_ok-123"), "");
+  ["AIza…123", "AIza 123", "AIza\n123", "AIzaŁ123"].forEach(k => assert.ok(keyProblem(k), JSON.stringify(k)));
+  await withFetch(() => geminiOk("{}"), async calls => {
+    await assert.rejects(callAi({ ...gem, apiKey: "AIza…123" }), e => e.code === "auth" && e.message.includes("niedozwolony znak"));
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("błąd sieci podaje szczegóły z przeglądarki", async () => {
+  await withFetch(() => { throw new TypeError("Failed to fetch"); }, async () => {
+    await assert.rejects(callAi(gem), e => e.code === "network" && e.message.includes("Failed to fetch") && e.message.includes("Sprawdź połączenie"));
+  });
+});
+
+test("checkAi pyta o model bez generowania odpowiedzi", async () => {
+  await withFetch(() => res(200, { name: "models/gemini-3.8-flash", displayName: "Gemini 3.8 Flash" }), async calls => {
+    assert.equal(await checkAi(gem), "Gemini 3.8 Flash");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash");
+    assert.equal(calls[0].init.method, "GET");
+    assert.equal(calls[0].init.headers["x-goog-api-key"], "AIzaTest");
+  });
+  await withFetch(() => res(404, { error: { code: 404, status: "NOT_FOUND", message: "not found" } }), async () => {
+    await assert.rejects(checkAi(gem), e => e.code === "model");
   });
 });
