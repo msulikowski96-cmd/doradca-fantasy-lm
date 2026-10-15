@@ -44,6 +44,10 @@ GitHub Pages: publikacja prosto z gałęzi `main` (Settings → Pages → Deploy
 - Rolę admina nadaje się SQL-em (`update profiles set role='admin' where email=…`) – nie wpisuj e-maili do repo.
 - Zmiany schematu: nowa migracja (`apply_migration`) + plik w `supabase/migrations/` + test RLS (blok `do $$ … raise exception $$`, wycofuje się sam).
 
+## Praca z repo
+
+- Mati chce, żeby każdą skończoną zmianę od razu mergować: PR → testy (`npm test`, `npm run check`) → oznacz jako gotowy → squash merge, bez pytania o zgodę.
+
 ## Konwencje
 
 - Cały interfejs i treść zapytań po **polsku**. Komunikaty: krótko, w stronie czynnej, błąd mówi co zrobić. Liczebniki przez `countN()` – bez „transfer(y)”.
