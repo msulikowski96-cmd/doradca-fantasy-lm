@@ -81,7 +81,7 @@ button,input,textarea,select{font:inherit;color:inherit}
 .btn.block{width:100%}
 label.f{display:flex;flex-direction:column;gap:4px;font-size:.85rem;font-weight:600;color:var(--muted);flex:1 1 140px}
 label.f .hint{font-weight:400}
-input[type=text],input[type=number],input[type=password],select,textarea{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:9px 10px;color:var(--ink);font-weight:400;font-size:.95rem;min-width:0}
+input[type=text],input[type=number],input[type=password],input[type=email],input[type=datetime-local],select,textarea{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:9px 10px;color:var(--ink);font-weight:400;font-size:.95rem;min-width:0}
 textarea{min-height:84px;resize:vertical;line-height:1.45}
 input[type=number]{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px;font-size:.78rem;font-weight:700;white-space:nowrap}
@@ -174,6 +174,22 @@ details[open] summary{margin-bottom:8px}
 ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:.92rem}
 .plan-text{margin:0;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;font-family:var(--body);font-size:.9rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 
+/* account & admin */
+.auth label.f,.card > label.f{flex:none}
+.seg button{flex:1 1 0;appearance:none;border:0;border-right:1px solid var(--line);background:var(--surface);padding:9px 6px;font-weight:600;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button[aria-selected="true"]{background:var(--ink);color:var(--bg)}
+.tbl{width:100%;border-collapse:collapse;font-size:.92rem}
+.tbl th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:4px 6px;border-bottom:1px solid var(--line)}
+.tbl td{padding:8px 6px;border-bottom:1px solid var(--line)}
+.tbl th.num,.tbl td.num{text-align:right}
+.tbl tbody tr{cursor:pointer}
+.tbl tbody tr:hover,.tbl tbody tr.sel{background:var(--surface-2)}
+.accounts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.acc{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--surface-2)}
+.acc-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn.small{padding:6px 10px;font-size:.85rem}
+
 /* history */
 .hist-item{border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:4px}
 .hist-item:first-of-type{border-top:0;padding-top:0}
@@ -186,6 +202,7 @@ ul.plain{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;f
 /* tabs */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
 .tabs-in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
+.tabs-in.five{grid-template-columns:repeat(5,1fr)}
 .tab-btn{appearance:none;border:0;background:none;padding:10px 4px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.78rem;font-weight:600;color:var(--muted)}
 .tab-btn svg{width:22px;height:22px}
 .tab-btn[aria-selected="true"]{color:var(--ink)}

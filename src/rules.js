@@ -304,6 +304,47 @@ export function planText({ forRound, ev, after, hitCost }) {
   return lines.join("\n");
 }
 
+/**
+ * Ranking ligi znajomych z zapisanych historii kolejek (panel admina).
+ * entries = [{ id, name, state }] -> [{ id, name, total, played, lastRound, lastPoints, transfers, rank }]
+ * Remis w sumie punktów = to samo miejsce.
+ */
+export function leagueTable(entries) {
+  const rows = (entries || []).map(e => {
+    const rounds = e.state && Array.isArray(e.state.rounds) ? e.state.rounds : [];
+    const scored = rounds.filter(r => r && r.points !== "" && r.points != null && isFinite(Number(r.points)));
+    const last = scored.reduce((a, r) => (!a || r.n > a.n ? r : a), null);
+    return {
+      id: e.id, name: e.name || "?",
+      total: scored.reduce((s, r) => s + Number(r.points), 0),
+      played: scored.length,
+      lastRound: last ? last.n : null,
+      lastPoints: last ? Number(last.points) : null,
+      transfers: rounds.reduce((s, r) => s + ((r && r.transfers) || []).length, 0),
+    };
+  }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "pl"));
+  rows.forEach((r, i) => { r.rank = i > 0 && r.total === rows[i - 1].total ? rows[i - 1].rank : i + 1; });
+  return rows;
+}
+
+/**
+ * Terminarz od admina (tabela game_data) nałożony na wbudowany (constants.js).
+ * Kolejki/mecze od admina wygrywają; brakujące zostają z wbudowanych. Zwraca { rounds, fixtures }.
+ */
+export function mergeGameData(baseRounds, baseFixtures, gd) {
+  const rounds = baseRounds.map(r => ({ ...r }));
+  ((gd && Array.isArray(gd.rounds)) ? gd.rounds : []).forEach(r => {
+    if (!r || !Number.isFinite(Number(r.n)) || !r.ko || isNaN(new Date(r.ko).getTime())) return;
+    const n = Number(r.n), i = rounds.findIndex(x => x.n === n);
+    const row = { n, ko: r.ko, sure: r.sure !== false };
+    if (i >= 0) rounds[i] = row; else rounds.push(row);
+  });
+  rounds.sort((a, b) => a.n - b.n);
+  const fixtures = { ...baseFixtures };
+  Object.entries((gd && gd.fixtures) || {}).forEach(([n, txt]) => { if (String(txt || "").trim()) fixtures[n] = String(txt); });
+  return { rounds, fixtures };
+}
+
 // Kolejka, przed którą jesteśmy, liczona z terminarza (termin = pierwszy mecz − 30 min).
 export function roundInfo(rounds, now = Date.now()) {
   const next = rounds.find(r => new Date(r.ko).getTime() - 30 * 60000 > now);

@@ -4,15 +4,20 @@
 import { POS, POS_PL, POS_ONE, CLUBS, SHORT, CHIPS, DEFAULT_RULES, ROUNDS, FIXTURES, EXAMPLE, STYLES, MODELS, PROVIDERS } from "./constants.js";
 import {
   r1, fmt, norm, canonClub, normPos, lastName, validateSquad, lineupProblems, autoLineup, benchOrder,
-  pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText,
+  pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText, mergeGameData,
 } from "./rules.js";
 import { buildAnalysisPrompt, SQUAD_IMPORT_PROMPT } from "./prompt.js";
 import { askJson, imageFileToData, checkAi, keyProblem } from "./ai.js";
-import { freshState, normalizeState, loadState, saveState, loadSettings, saveSettings } from "./storage.js";
+import {
+  freshState, normalizeState, loadState, saveState, loadSettings, saveSettings, stateKey, hasData, loadMode, saveMode,
+} from "./storage.js";
+import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
+import { createCloud } from "./cloud.js";
+import { renderAuth } from "./account.js";
+import { renderAdmin, resetAdmin } from "./admin.js";
+import { $, esc } from "./dom.js";
 
 /* ---------- helpers ---------- */
-const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clone = o => JSON.parse(JSON.stringify(o));
 const newId = () => "p" + Math.random().toString(36).slice(2, 9);
 const short = c => SHORT[c] || String(c || "?").slice(0, 3).toUpperCase();
@@ -20,8 +25,17 @@ const fmtDate = d => new Intl.DateTimeFormat("pl-PL", { timeZone: "Europe/Warsaw
 const MAX_IMAGES = 5;
 
 /* ---------- state ---------- */
-let state = loadState();
+let state = freshState();
 let settings = loadSettings();
+// Konto: "local" = bez konta (dane tylko w przeglądarce), "cloud" = zalogowany (Supabase).
+const cloud = createCloud({ url: SUPABASE_URL, key: SUPABASE_KEY });
+const acct = { mode: "local", profile: null, aiCfg: null, offerMigrate: false, msg: "" };
+let stateKeyNow = stateKey(null);
+// Terminarz: wbudowany + to, co ustawił admin (game_data).
+let game = mergeGameData(ROUNDS, FIXTURES, null);
+const curRounds = () => game.rounds;
+const curFixtures = () => game.fixtures;
+const isAdmin = () => acct.mode === "cloud" && acct.profile && acct.profile.role === "admin";
 const ui = {
   tab: "squad", editing: false, draft: null, setOrig: false, selected: null, swapFrom: null, squadMsg: "",
   aiBusy: false, ctl: null, timer: null, started: 0, retry: 0, aiMsg: "", roundImages: [], importBusy: false, importMsg: "",
@@ -38,11 +52,24 @@ function selectText(el) {
 }
 const retryNote = () => ui.retry ? ` · serwery zajęte, próba ${ui.retry + 1}` : "";
 
-function save() {
-  const ok = saveState(state);
+function setSync(s, text) {
   const el = $("#sync");
-  el.dataset.s = ok ? "saved" : "error";
-  el.textContent = ok ? "Zapisano w przeglądarce" : "Nie można zapisać";
+  el.dataset.s = s; el.textContent = text;
+}
+function save() {
+  const ok = saveState(state, stateKeyNow);
+  if (acct.mode === "cloud") { scheduleCloudSave(); return; }
+  setSync(ok ? "saved" : "error", ok ? "Zapisano w przeglądarce" : "Nie można zapisać");
+}
+// Zapis w chmurze z opóźnieniem – kilka szybkich zmian to jeden zapis. Kopia w przeglądarce jest zawsze.
+let cloudTimer = null;
+function scheduleCloudSave() {
+  setSync("saving", "Zapisywanie…");
+  clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(async () => {
+    try { await cloud.saveState(state); setSync("saved", "Zapisano w chmurze"); }
+    catch (e) { setSync("error", e && e.code === "session" ? "Zaloguj się ponownie" : "Nie zapisano w chmurze – ponowię przy kolejnej zmianie"); }
+  }, 1200);
 }
 let draftTimer = null;
 function draftSave() { clearTimeout(draftTimer); draftTimer = setTimeout(save, 500); }
@@ -51,8 +78,14 @@ function draftSave() { clearTimeout(draftTimer); draftTimer = setTimeout(save, 5
 const curModel = () => MODELS.find(m => m.id === settings.model) || MODELS[0];
 const curProvider = () => PROVIDERS[curModel().provider];
 const curKey = () => settings[curProvider().keyField] || "";
-const aiOpts = () => ({ provider: curModel().provider, apiKey: curKey(), model: curModel().id });
-const aiReady = () => !!curKey();
+// Wspólny klucz ligi (ustawia admin, trzyma serwer) – chyba że gracz wybrał własny klucz.
+const sharedAi = () => acct.mode === "cloud" && !!(acct.aiCfg && acct.aiCfg.key_set) && !settings.ownKey;
+const aiOpts = () => sharedAi()
+  ? { provider: acct.aiCfg.provider, model: acct.aiCfg.model, apiKey: "", proxy: cloud.proxy() }
+  : { provider: curModel().provider, apiKey: curKey(), model: curModel().id };
+const aiReady = () => sharedAi() || !!curKey();
+// Po analizie przez wspólny klucz odśwież licznik „dziś wykorzystano”.
+const refreshAiCfg = () => { if (sharedAi()) cloud.aiConfig().then(c => { acct.aiCfg = c; }).catch(() => {}); };
 const freeNow = () => {
   const d = state.draftRound;
   return (d.free !== undefined && d.free !== "") ? Number(d.free) : state.rules.freeTransfers;
@@ -60,11 +93,11 @@ const freeNow = () => {
 const evalCtx = () => ({ current: state.current, rules: state.rules, chips: state.chips, free: freeNow() });
 function currentDone() {
   const d = Number(state.draftRound.done);
-  return d >= 1 && d <= 8 ? d : roundInfo(ROUNDS).done;
+  return d >= 1 && d <= 8 ? d : roundInfo(curRounds()).done;
 }
 function fixturesFor(next) {
   const d = state.draftRound;
-  if (d.fixturesFor !== next) { d.fixturesFor = next; d.fixtures = FIXTURES[next] || ""; }
+  if (d.fixturesFor !== next) { d.fixturesFor = next; d.fixtures = curFixtures()[next] || ""; }
   return d.fixtures;
 }
 
@@ -91,6 +124,7 @@ async function runAnalysis(fix) {
     if (!res || typeof res !== "object" || Array.isArray(res)) throw { message: "AI zwróciło odpowiedź w złym formacie. Spróbuj jeszcze raz." };
     state.pendingRec = Object.assign(cleanRec(res, state.current), { forRound: next, afterRound: done, createdAt: Date.now() });
     save();
+    refreshAiCfg();
   } catch (e) {
     ui.aiMsg = (e && e.message) || "Analiza się nie udała. Spróbuj ponownie.";
   } finally {
@@ -183,7 +217,7 @@ function saveDraft() {
 function maybeRevertFreeHit(fromForm) {
   const fh = state.freeHit;
   if (!fh) return;
-  const done = fromForm ? currentDone() : roundInfo(ROUNDS).done;
+  const done = fromForm ? currentDone() : roundInfo(curRounds()).done;
   if (done >= fh.round) {
     state.current = fh.squadBefore; state.freeHit = null;
     ui.notice = `Free Hit z kolejki ${fh.round} się skończył. Przywrócono skład sprzed tej kolejki.`;
@@ -244,7 +278,7 @@ function logRound(extra, roster) {
 
 /* ---------- header ---------- */
 function renderHeader() {
-  const ri = roundInfo(ROUNDS);
+  const ri = roundInfo(curRounds());
   const el = $("#nextInfo");
   if (!ri.next) { el.textContent = "Faza ligowa zakończona"; el.dataset.urgent = ""; return ri.done; }
   const left = timeLeft(ri.deadline);
@@ -268,6 +302,14 @@ function chipHTML(p, cur) {
 
 function renderSquad() {
   const el = $("#tab-squad");
+  if (acct.offerMigrate) {
+    el.innerHTML = `<div class="card"><h2>Skład z tej przeglądarki</h2>
+      <p class="muted">Na tym urządzeniu jest skład zapisany bez konta. Przenieść go na Twoje konto? Jeśli to nie Twój skład (np. wspólny telefon), zacznij od nowa.</p>
+      <div class="actions"><button class="btn primary" id="migYes">Przenieś na moje konto</button><button class="btn" id="migNo">Zacznij od nowa</button></div></div>`;
+    $("#migYes").addEventListener("click", () => { state = loadState(stateKey(null)); acct.offerMigrate = false; ui.squadMsg = "Skład przeniesiony na Twoje konto."; save(); renderAll(); });
+    $("#migNo").addEventListener("click", () => { acct.offerMigrate = false; renderAll(); });
+    return;
+  }
   const cur = state.current;
   if (!cur || ui.editing) { el.innerHTML = editorHTML(); bindEditor(); return; }
   const value = r1(cur.players.reduce((s, p) => s + p.price, 0));
@@ -464,7 +506,7 @@ function renderRound() {
       </details>
       <label class="f" for="rNews">Wiadomości<span class="hint">Kontuzje, zawieszenia, kto nie zagrał, zmiany cen. Wklej z Sofascore albo opisz własnymi słowami.</span>
         <textarea id="rNews" placeholder="np. Guirassy zszedł z urazem w 30. min, Yamal podrożał do 12,3">${esc(d.news || "")}</textarea></label>
-      <label class="f" for="rFixtures">Mecze kolejki ${next}<span class="hint">${FIXTURES[next] ? "Uzupełnione z terminarza UEFA – popraw, jeśli coś się zmieniło." : "Wklej terminarz z Sofascore."}</span>
+      <label class="f" for="rFixtures">Mecze kolejki ${next}<span class="hint">${curFixtures()[next] ? "Uzupełnione z terminarza – popraw, jeśli coś się zmieniło." : "Wklej terminarz z Sofascore."}</span>
         <textarea id="rFixtures">${esc(fixtures)}</textarea></label>
       <label class="f" for="rMarket">Kandydaci z rynku<span class="hint">Opcjonalnie: zawodnicy, których rozważasz, z cenami z aplikacji. AI użyje tych cen zamiast szacunków.</span>
         <textarea id="rMarket" placeholder="np. Kane FWD Bayern 11,0; Raya GK Arsenal 6,0">${esc(d.market || "")}</textarea></label>
@@ -635,12 +677,68 @@ function renderHistory() {
   }));
 }
 
+/* ---------- account ---------- */
+function accountCardHTML() {
+  if (!cloud.enabled) return "";
+  if (acct.mode !== "cloud") {
+    return `<div class="card"><h2>Konto</h2>
+      <p class="small muted">Korzystasz bez konta – dane są tylko w tej przeglądarce. Z kontem zobaczysz skład na każdym telefonie i zagrasz w lidze znajomych.</p>
+      <div class="actions"><button class="btn primary" id="accLogin">Zaloguj się lub załóż konto</button></div></div>`;
+  }
+  const p = acct.profile || {}, u = cloud.user() || {};
+  return `<div class="card"><h2>Konto</h2>
+    <p><b>${esc(p.display_name || "")}</b> <span class="muted small">${esc(u.email || p.email || "")}</span> ${isAdmin() ? `<span class="pill ok">admin</span>` : ""}</p>
+    <div class="row"><label class="f" for="accName">Nazwa w lidze<input type="text" id="accName" maxlength="40" value="${esc(p.display_name || "")}"></label>
+      <button class="btn" id="accNameSave" style="flex:none">Zapisz nazwę</button></div>
+    <div class="row"><label class="f" for="accPw">Nowe hasło<input type="password" id="accPw" autocomplete="new-password" minlength="8"></label>
+      <button class="btn" id="accPwSave" style="flex:none">Zmień hasło</button></div>
+    <div class="actions"><button class="btn danger" id="accLogout">Wyloguj</button></div>
+    ${acct.msg ? `<p class="small" id="accMsg">${esc(acct.msg)}</p>` : ""}
+  </div>`;
+}
+
+function bindAccountCard() {
+  const li = $("#accLogin");
+  if (li) li.addEventListener("click", () => { saveMode(""); showAuth(); });
+  const ns = $("#accNameSave");
+  if (ns) ns.addEventListener("click", async () => {
+    const name = $("#accName").value.trim();
+    if (!name) { acct.msg = "Wpisz nazwę."; renderRules(); return; }
+    try { await cloud.updateMyName(name); acct.profile.display_name = name; acct.msg = "Nazwa zapisana."; }
+    catch (e) { acct.msg = (e && e.message) || "Nie udało się zapisać nazwy."; }
+    renderRules();
+  });
+  const ps = $("#accPwSave");
+  if (ps) ps.addEventListener("click", async () => {
+    const pw = $("#accPw").value;
+    if (pw.length < 8) { acct.msg = "Hasło musi mieć co najmniej 8 znaków."; renderRules(); return; }
+    try { await cloud.changePassword(pw); acct.msg = "Hasło zmienione."; }
+    catch (e) { acct.msg = (e && e.message) || "Nie udało się zmienić hasła."; }
+    renderRules();
+  });
+  const lo = $("#accLogout");
+  if (lo) lo.addEventListener("click", logout);
+}
+
 /* ---------- rules tab ---------- */
 function renderRules() {
   const el = $("#tab-rules"), r = state.rules;
   const prov = curProvider(), key = curKey();
   const masked = key ? key.slice(0, 8) + "…" + key.slice(-4) : "";
+  const sharedAvail = acct.mode === "cloud" && !!(acct.aiCfg && acct.aiCfg.key_set);
+  const cfg = acct.aiCfg || {};
+  const sharedLabel = (MODELS.find(m => m.id === cfg.model) || {}).label || cfg.model;
   el.innerHTML = `
+    ${accountCardHTML()}
+    ${sharedAi() ? `<div class="card"><h2>Model AI</h2>
+      <p>Analizy idą przez wspólny klucz ligi: <b>${esc(sharedLabel)}</b>.</p>
+      <p class="small muted">Dziś wykorzystano ${esc(cfg.used_today ?? 0)} z ${esc(cfg.daily_limit)} analiz${isAdmin() ? " (jako admin nie masz limitu)" : ""}. Klucz zna tylko serwer – nikt go nie zobaczy.</p>
+      <div class="actions">
+        <button class="btn" id="keyCheck">Sprawdź połączenie</button>
+        <button class="btn ghost" id="ownKeyOn">Używaj własnego klucza</button>
+      </div>
+      ${ui.keyMsg ? `<p class="small" id="keyMsg">${esc(ui.keyMsg)}</p>` : ""}
+    </div>` : `
     <div class="card"><h2>Model AI i klucz API</h2>
       <div class="row"><label class="f" for="apiModel">Model<select id="apiModel">${Object.entries(PROVIDERS).map(([pk, p]) =>
         `<optgroup label="${esc(p.label)}">${MODELS.filter(m => m.provider === pk).map(m => `<option value="${m.id}" ${settings.model === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</optgroup>`).join("")}</select></label></div>
@@ -651,9 +749,10 @@ function renderRules() {
         <button class="btn primary" id="keySave">Zapisz klucz</button>
         ${key ? `<button class="btn" id="keyCheck">Sprawdź połączenie</button>` : ""}
         ${key ? `<button class="btn danger" id="keyDel">Usuń klucz</button>` : ""}
+        ${sharedAvail ? `<button class="btn ghost" id="ownKeyOff">Wróć do wspólnego klucza ligi</button>` : ""}
       </div>
       ${ui.keyMsg ? `<p class="small" id="keyMsg">${esc(ui.keyMsg)}</p>` : ""}
-    </div>
+    </div>`}
     <div class="card"><h2>Zasady gry</h2>
       <p class="small muted">Według tych zasad aplikacja sprawdza każdy plan AI. Budżet 100 M€ i limit 3 zawodników z klubu pochodzą z Sofascore. Liczbę darmowych transferów i koszt dodatkowego sprawdź w regulaminie w aplikacji i popraw, jeśli się różnią.</p>
       <div class="row">
@@ -670,7 +769,7 @@ function renderRules() {
       <div class="actions"><button class="btn" id="ruReset">Przywróć domyślne</button></div>
     </div>
     <div class="card"><h2>Kopia danych</h2>
-      <p class="small muted">Dane są zapisane w tej przeglądarce. Kopia pozwala przenieść je na inne urządzenie albo zabezpieczyć przed wyczyszczeniem przeglądarki.</p>
+      <p class="small muted">${acct.mode === "cloud" ? "Dane są zapisane na Twoim koncie (i w kopii w tej przeglądarce)." : "Dane są zapisane w tej przeglądarce."} Kopia pozwala przenieść je na inne urządzenie albo zabezpieczyć przed wyczyszczeniem przeglądarki.</p>
       <div class="actions"><button class="btn" id="exFile">Pobierz plik</button><button class="btn" id="exCopy">Skopiuj jako tekst</button><span class="small muted" id="exMsg"></span></div>
       <label class="f" for="imText">Wczytaj kopię<textarea id="imText" placeholder="Wklej tutaj skopiowaną kopię danych albo wybierz plik"></textarea></label>
       <div class="actions">
@@ -683,7 +782,12 @@ function renderRules() {
       <div class="actions"><button class="btn danger" id="resetAll">${ui.resetArm ? "Kliknij ponownie, żeby usunąć wszystko" : "Usuń wszystkie dane"}</button></div>
     </div>`;
 
-  $("#keySave").addEventListener("click", () => {
+  bindAccountCard();
+  const own = v => () => { settings.ownKey = v; saveSettings(settings); ui.keyMsg = ""; renderAll(); switchTab("rules"); };
+  const on = $("#ownKeyOn"); if (on) on.addEventListener("click", own(true));
+  const off = $("#ownKeyOff"); if (off) off.addEventListener("click", own(false));
+  const ks = $("#keySave");
+  if (ks) ks.addEventListener("click", () => {
     // Klucze nie mają spacji ani złamań linii – usuwamy je, bo często dochodzą przy kopiowaniu na telefonie.
     const k = $("#apiKey").value.replace(/\s+/g, "");
     if (!k) { ui.keyMsg = "Najpierw wklej klucz."; renderRules(); return; }
@@ -696,7 +800,8 @@ function renderRules() {
     renderAll(); switchTab("rules");
   });
   // Zmiana modelu może zmienić dostawcę i klucz, więc odświeżamy wszystkie zakładki.
-  $("#apiModel").addEventListener("change", e => { settings.model = e.target.value; saveSettings(settings); ui.keyMsg = ""; renderAll(); switchTab("rules"); });
+  const am = $("#apiModel");
+  if (am) am.addEventListener("change", e => { settings.model = e.target.value; saveSettings(settings); ui.keyMsg = ""; renderAll(); switchTab("rules"); });
   const kc = $("#keyCheck");
   if (kc) kc.addEventListener("click", async () => {
     kc.disabled = true; kc.textContent = "Sprawdzam…";
@@ -759,28 +864,141 @@ function renderRules() {
 }
 
 /* ---------- shell ---------- */
+const TABS = ["squad", "round", "history", "rules", "admin"];
 function renderAll() {
   maybeRevertFreeHit(false);
   renderHeader();
   renderSquad(); renderRound(); renderHistory(); renderRules();
 }
 function switchTab(t) {
+  if (t === "admin" && !isAdmin()) t = "squad";
   ui.tab = t;
   document.querySelectorAll(".tab-btn").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
-  ["squad", "round", "history", "rules"].forEach(k => { $("#tab-" + k).hidden = k !== t; });
-  if (t !== "rules") { ui.resetArm = false; ui.importArm = false; ui.keyMsg = ""; }
+  TABS.forEach(k => { $("#tab-" + k).hidden = k !== t; });
+  if (t !== "rules") { ui.resetArm = false; ui.importArm = false; ui.keyMsg = ""; acct.msg = ""; }
   ui.histDel = null;
   if (t === "squad") renderSquad();
   if (t === "history") renderHistory();
   if (t === "rules") renderRules();
+  if (t === "admin") renderAdminTab();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
-renderAll();
+function renderAdminTab() {
+  renderAdmin($("#tab-admin"), {
+    cloud, me: acct.profile, MODELS, PROVIDERS,
+    rounds: curRounds, fixtures: curFixtures, nextRound: () => Math.min(8, roundInfo(curRounds()).done + 1),
+    // Kolejka nie rysuje się przy zmianie zakładki (żeby nie gubić wpisów), więc odświeżamy ją tu.
+    onGameData: gd => { applyGame(gd); renderHeader(); renderRound(); },
+    onAiConfig: c => { acct.aiCfg = c; renderRound(); },
+  });
+}
+
+function applyGame(gd) {
+  game = mergeGameData(ROUNDS, FIXTURES, gd);
+  lastDone = roundInfo(curRounds()).done;
+}
+
+/* ---------- start: konto albo tryb bez konta ---------- */
+// Widok: "app" (zakładki), "auth" (logowanie) albo komunikat w miejscu zakładek.
+function showView(v) {
+  $("#auth").hidden = v === "app";
+  $(".tabs").hidden = v !== "app";
+  if (v !== "app") TABS.forEach(k => { $("#tab-" + k).hidden = true; });
+}
+function showMessage(html) {
+  showView("auth");
+  $("#auth").innerHTML = html;
+}
+function showApp() {
+  showView("app");
+  const admin = isAdmin();
+  $("#tabAdmin").hidden = !admin;
+  $(".tabs-in").classList.toggle("five", admin);
+  renderAll(); switchTab(ui.tab);
+}
+function showAuth() {
+  showView("auth");
+  setSync("saved", "Bez konta");
+  renderAuth($("#auth"), {
+    cloud, hasLocalData: hasData(loadState()),
+    onSignedIn: startCloud,
+    onLocal: () => { saveMode("local"); startLocal(); },
+  });
+}
+
+function startLocal() {
+  Object.assign(acct, { mode: "local", profile: null, aiCfg: null, offerMigrate: false, msg: "" });
+  stateKeyNow = stateKey(null);
+  state = loadState(stateKeyNow);
+  applyGame(null);
+  setSync("saved", "Zapisano w przeglądarce");
+  showApp();
+}
+
+async function startCloud() {
+  showMessage(`<div class="card"><p class="muted">Łączę z Twoim kontem…</p></div>`);
+  try {
+    const user = cloud.user() || await cloud.loadUser();
+    const profile = await cloud.profile();
+    if (!profile) throw Object.assign(new Error("Nie znaleziono profilu konta. Zaloguj się ponownie."), { code: "session" });
+    if (profile.blocked) {
+      showMessage(`<div class="card"><h2>Konto zablokowane</h2><p class="muted">Admin ligi zablokował to konto. Skontaktuj się z nim, żeby je odblokować.</p>
+        <div class="actions"><button class="btn" id="blockedLogout">Wyloguj</button></div></div>`);
+      $("#blockedLogout").addEventListener("click", logout);
+      return;
+    }
+    Object.assign(acct, { mode: "cloud", profile, msg: "" });
+    stateKeyNow = stateKey(user.id);
+    const [remote, cfg, gd] = await Promise.all([cloud.loadState(), cloud.aiConfig(), cloud.gameData()]);
+    acct.aiCfg = cfg;
+    applyGame(gd);
+    if (remote && hasData(remote.state)) {
+      state = normalizeState(remote.state);
+      saveState(state, stateKeyNow);
+      acct.offerMigrate = false;
+    } else {
+      const cached = loadState(stateKeyNow);
+      state = hasData(cached) ? cached : freshState();
+      // Skład z trybu bez konta przenosimy tylko na wyraźną zgodę (telefon może być wspólny).
+      acct.offerMigrate = !hasData(state) && hasData(loadState(stateKey(null)));
+    }
+    saveMode("");
+    setSync("saved", "Zapisano w chmurze");
+    showApp();
+  } catch (e) {
+    if (e && e.code === "session") { await cloud.signOut(); showAuth(); return; }
+    // Brak sieci: pracujemy na kopii z przeglądarki, zapis w chmurze ponowi się przy zmianie.
+    acct.mode = "cloud";
+    const u = cloud.user();
+    stateKeyNow = stateKey(u && u.id);
+    state = loadState(stateKeyNow);
+    showApp();
+    setSync("error", "Brak połączenia – zapisuję w przeglądarce");
+  }
+}
+
+async function logout() {
+  clearTimeout(cloudTimer);
+  await cloud.signOut();
+  resetAdmin();
+  Object.assign(acct, { mode: "local", profile: null, aiCfg: null, offerMigrate: false, msg: "" });
+  state = freshState(); ui.tab = "squad"; ui.draft = null; ui.editing = false;
+  showAuth();
+}
+
+let lastDone = roundInfo(curRounds()).done;
+async function boot() {
+  if (cloud.enabled && cloud.fromUrlHash(location.hash)) history.replaceState(null, "", location.pathname + location.search);
+  if (cloud.enabled && cloud.session()) return startCloud();
+  if (cloud.enabled && loadMode() !== "local") return showAuth();
+  startLocal();
+}
+boot();
 // Odliczanie w nagłówku; gdy minie termin kolejki, odświeża całą stronę (np. koniec Free Hita).
-let lastDone = roundInfo(ROUNDS).done;
 setInterval(() => {
+  if ($(".tabs").hidden) return;
   const done = renderHeader();
   if (done !== lastDone) { lastDone = done; renderAll(); }
 }, 30000);
