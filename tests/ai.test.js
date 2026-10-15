@@ -53,7 +53,7 @@ test("Gemini: zapytanie idzie do generateContent z obrazem i trybem JSON", async
     const out = await askJson({ ...gem, images: [{ mediaType: "image/jpeg", data: "QUJD" }], maxTokens: 2048 });
     assert.deepEqual(out, { ok: true });
     const c = calls[0];
-    assert.equal(c.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=AIzaTest");
+    assert.equal(c.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
     assert.equal(c.init.headers["x-goog-api-key"], "AIzaTest");
     assert.deepEqual(c.body.contents[0].parts[0], { inlineData: { mimeType: "image/jpeg", data: "QUJD" } });
     assert.equal(c.body.contents[0].parts[1].text, "p");
@@ -116,11 +116,37 @@ test("checkAi pyta o model bez generowania odpowiedzi", async () => {
   await withFetch(() => res(200, { name: "models/gemini-3.8-flash", displayName: "Gemini 3.8 Flash" }), async calls => {
     assert.equal(await checkAi(gem), "Gemini 3.8 Flash");
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash?key=AIzaTest");
+    assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash");
     assert.equal(calls[0].init.method, "GET");
     assert.equal(calls[0].init.headers["x-goog-api-key"], "AIzaTest");
   });
   await withFetch(() => res(404, { error: { code: 404, status: "NOT_FOUND", message: "not found" } }), async () => {
     await assert.rejects(checkAi(gem), e => e.code === "model");
+  });
+});
+
+test("Gemini: klucz tylko w nagłówku, prefiks models/ usuwany z adresu", async () => {
+  await withFetch(() => geminiOk("{}"), async calls => {
+    await callAi({ ...gem, model: "models/gemini-3.8-flash" });
+    await checkAi({ ...gem, model: " models/gemini-3.8-flash " });
+    for (const c of calls) {
+      assert.ok(!c.url.includes("AIzaTest") && !c.url.includes("key="), c.url);
+      assert.ok(c.url.includes("/models/gemini-3.8-flash") && !c.url.includes("models%2F"), c.url);
+      assert.equal(c.init.headers["x-goog-api-key"], "AIzaTest");
+    }
+  });
+});
+
+test("Gemini: wzmianka o kluczu przy 429/503 nie zmienia błędu w „zły klucz”", async () => {
+  const quota = { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for this API key." } };
+  await withFetch((c, n) => n < 2 ? res(429, quota) : geminiOk("{}"), async calls => {
+    const out = await callAi({ ...gem, retryDelays: [1, 1] });
+    assert.equal(out.text, "{}");
+    assert.equal(calls.length, 2);
+  });
+  const unregistered = { error: { code: 403, status: "PERMISSION_DENIED", message: "Method doesn't allow unregistered callers (callers without established identity). Please use API Key or other form of API consumer identity to call this API." } };
+  await withFetch(() => res(403, unregistered), async calls => {
+    await assert.rejects(callAi({ ...gem, retryDelays: [1] }), e => e.code === "auth");
+    assert.equal(calls.length, 1);
   });
 });

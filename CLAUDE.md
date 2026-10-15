@@ -5,7 +5,8 @@ Aplikacja w przeglądarce dla gry **Sofascore Fantasy – Liga Mistrzów 2026/27
 ## Komendy
 
 - `npm run dev` – serwer lokalny na http://localhost:5173 (moduły ES nie działają z `file://`).
-- `npm test` – testy zasad (`node:test`, bez zależności).
+- `npm test` – testy zasad i połączenia z AI (`node:test`, bez zależności).
+- `npm run check` – sprawdzenie składni każdego pliku w `src/` (`node --check` po kolei; `node --check a.js b.js` sprawdza tylko pierwszy plik).
 
 Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 
@@ -16,7 +17,7 @@ Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 - `src/constants.js` – kluby fazy ligowej, terminarz (`ROUNDS`, `FIXTURES`), domyślne zasady, przykładowy skład, modele (`MODELS`, każdy z polem `provider`) i dostawcy (`PROVIDERS`: pole klucza w ustawieniach, link do konsoli).
 - `src/rules.js` – **czyste funkcje** zasad: `validateSquad`, `lineupProblems`, `evalRec` (ocena planu AI), `applyEvaluated`, `planText` (plan jako tekst), dopasowanie nazwisk i klubów, `plural`/`countN` (polska odmiana), `timeLeft`. Bez DOM – testowane w `tests/`.
 - `src/prompt.js` – treść zapytań do Claude (analiza po kolejce, odczyt składu ze zrzutu).
-- `src/ai.js` – `callAi`/`askJson` z przeglądarki (`fetch`) do dwóch dostawców: Anthropic Messages API (nagłówek `anthropic-dangerous-direct-browser-access`) i Gemini API (`v1beta/models/{model}:generateContent`, nagłówek `x-goog-api-key`, `responseMimeType: application/json`, zapas `maxOutputTokens` na tokeny myślenia, części `thought: true` pomijane). Wspólne: `keyProblem()` (klucz tylko ze znaków ASCII bez spacji – inaczej przeglądarka rzuca TypeError przy nagłówku), `checkAi()` (GET modelu – przycisk „Sprawdź połączenie”), błąd sieci ze szczegółem z przeglądarki, ponawianie przy 429/529/5xx (bez czekania, gdy API każe czekać > 30 s), parsowanie JSON, zmniejszanie zrzutów (`imageFileToData` → `{ mediaType, data }`). Testy w `tests/ai.test.js` (mock `fetch`).
+- `src/ai.js` – `callAi`/`askJson` z przeglądarki (`fetch`) do dwóch dostawców: Anthropic Messages API (nagłówek `anthropic-dangerous-direct-browser-access`) i Gemini API (`v1beta/models/{model}:generateContent`, prefiks `models/` usuwany z id, klucz **tylko** w nagłówku `x-goog-api-key` – nie w `?key=`, bo adres trafia do logów), `responseMimeType: application/json`, zapas `maxOutputTokens` na tokeny myślenia, części `thought: true` pomijane). Wspólne: `keyProblem()` (klucz tylko ze znaków ASCII bez spacji – inaczej przeglądarka rzuca TypeError przy nagłówku), `checkAi()` (GET modelu – przycisk „Sprawdź połączenie”), błąd sieci ze szczegółem z przeglądarki, ponawianie przy 429/529/5xx (bez czekania, gdy API każe czekać > 30 s), parsowanie JSON, zmniejszanie zrzutów (`imageFileToData` → `{ mediaType, data }`). Testy w `tests/ai.test.js` (mock `fetch`).
 - `src/storage.js` – stan w `localStorage`; ustawienia w osobnym wpisie: `model`, `apiKey` (Anthropic), `geminiKey` – nie trafiają do eksportu. `lastPlan` = tekst ostatnio zastosowanego planu + `undo` (stan sprzed zmian; zerowany po ręcznej edycji składu).
 - `src/app.js` – renderowanie zakładek (Skład, Kolejka, Historia, Zasady) i obsługa zdarzeń.
 - `claude-ai-artifact/doradca-fantasy-lm.html` – pierwotna wersja jako artifact na claude.ai (używa `window.claude` – `sample`, `db`). Edytuj tylko, jeśli użytkownik prosi o zmianę wersji na claude.ai.
@@ -41,4 +42,4 @@ Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 
 - `FIXTURES` zawiera tylko kolejkę 3. Kolejne kolejki użytkownik wkleja w aplikacji; możesz dopisać terminarz, jeśli masz go ze źródła (UEFA/Sofascore).
 - `ROUNDS`: godziny dla kolejek 4–8 są szacowane (`sure: false`).
-- Modele w `MODELS` (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `gemini-3.8-flash`) – sprawdź w dokumentacji Anthropic / Gemini API, zanim je zmienisz.
+- Modele w `MODELS` (`claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`, `gemini-3.5-flash`, `gemini-3.8-flash`, `gemini-flash-latest`, `gemini-3.5-flash-lite`) – sprawdź w dokumentacji Anthropic / Gemini API (albo na liście `GET v1beta/models`), zanim je zmienisz.
