@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_RULES, EXAMPLE } from "../src/constants.js";
-import { canonClub, findByName, validateSquad, lineupProblems, autoLineup, evalRec, applyEvaluated, cleanRec, roundInfo, plural, countN, timeLeft, planText, leagueTable, mergeGameData } from "../src/rules.js";
+import { canonClub, findByName, validateSquad, lineupProblems, autoLineup, evalRec, applyEvaluated, cleanRec, roundInfo, plural, countN, timeLeft, planText, leagueTable, mergeGameData, mergeRoundEntry } from "../src/rules.js";
 import { ROUNDS } from "../src/constants.js";
 
 const rules = DEFAULT_RULES;
@@ -182,4 +182,17 @@ test("mergeGameData: terminarz admina nadpisuje wbudowany, złe wpisy są pomija
   assert.equal(m.fixtures[4], "Wt 04.11 (18:45): A – B");
   assert.equal(base[1].sure, false); // wejście nie zmienione
   assert.deepEqual(mergeGameData(base, {}, null).rounds, base);
+});
+
+test("mergeRoundEntry: zastosowanie planu nie kasuje zapisanych wcześniej punktów", () => {
+  const old = { n: 2, points: 71, playerPts: [{ name: "Haaland", pts: 15 }], transfers: [{ out: "A", in: "B" }], chip: null, hits: 0, summary: "" };
+  const m = mergeRoundEntry(old, { n: 2, points: "", playerPts: [], transfers: [{ out: "C", in: "D" }], chip: "wildcard", hits: 1, summary: "Plan" });
+  assert.equal(m.points, 71);
+  assert.deepEqual(m.playerPts, [{ name: "Haaland", pts: 15 }]);
+  assert.equal(m.transfers.length, 2);
+  assert.equal(m.chip, "wildcard");
+  assert.equal(m.hits, 1);
+  assert.equal(m.summary, "Plan");
+  assert.equal(mergeRoundEntry(old, { n: 2, points: "80", playerPts: [], transfers: [] }).points, "80");
+  assert.equal(mergeRoundEntry(null, { n: 3, points: 5 }).points, 5);
 });
