@@ -1,5 +1,5 @@
 // Czysta logika proxy AI (bez Deno/Supabase), żeby dało się ją testować w Node (tests/proxy.test.js).
-// Proxy dokłada wspólny klucz admina, więc przepuszcza tylko zapytania do skonfigurowanego modelu.
+// Proxy dokłada wspólny klucz admina, więc przepuszcza tylko zapytania do dozwolonych modeli.
 
 export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
 export const ANTHROPIC_MESSAGES = "https://api.anthropic.com/v1/messages";
@@ -9,6 +9,11 @@ export const ANTHROPIC_MODELS = "https://api.anthropic.com/v1/models/";
 export const MAX_TOKENS = { gemini: 40000, anthropic: 8000 };
 
 const cleanModel = m => decodeURIComponent(String(m || "")).trim().replace(/^models\//, "");
+
+// Modele Gemini, które gracze mogą wybrać przy wspólnym kluczu (podobna cena – wszystkie „Flash”).
+// Dla Claude tylko model ustawiony przez admina (Opus jest dużo droższy).
+export const SHARED_GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.5-flash-lite"];
+const geminiAllowed = (cfg, model) => cleanModel(model) === cleanModel(cfg.model) || SHARED_GEMINI_MODELS.includes(cleanModel(model));
 
 /**
  * Sprawdza zapytanie klienta względem ustawień admina.
@@ -27,7 +32,7 @@ export function checkTarget(cfg, req) {
     if (!url.startsWith(GEMINI_BASE)) return bad("Wspólny klucz obsługuje tylko Gemini API.");
     const rest = url.slice(GEMINI_BASE.length);
     const [modelPart, action] = rest.split(":");
-    if (cleanModel(modelPart) !== cleanModel(cfg.model)) return bad(`Wspólny klucz działa tylko z modelem ${cfg.model}.`);
+    if (!geminiAllowed(cfg, modelPart)) return bad(`Wspólny klucz działa tylko z modelami: ${SHARED_GEMINI_MODELS.join(", ")}.`);
     if (method === "GET" && action === undefined) return { ok: true, generate: false };
     if (method === "POST" && action === "generateContent") {
       const max = Number(body.generationConfig && body.generationConfig.maxOutputTokens) || 0;

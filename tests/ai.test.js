@@ -182,3 +182,26 @@ test("proxy: zapytanie idzie do funkcji z tokenem, bez klucza; błędy proxy nie
     assert.equal(calls[0].body.method, "GET");
   });
 });
+
+test("przeciążony model: po ponowieniach aplikacja próbuje kolejnego z fallbackModels", async () => {
+  const seen = [];
+  const busy = res(503, { error: { code: 503, status: "UNAVAILABLE", message: "This model is currently experiencing high demand." } });
+  await withFetch(c => { seen.push(c.url.split("/").pop()); return c.url.includes("gemini-3.8-flash") ? busy : geminiOk('{"ok":2}'); }, async () => {
+    const fell = [];
+    const out = await callAi({ ...gem, retryDelays: [1], fallbackRetryDelays: [1], fallbackModels: ["gemini-3.5-flash", "gemini-flash-latest"], onFallback: m => fell.push(m) });
+    assert.equal(out.text, '{"ok":2}');
+    assert.equal(out.model, "gemini-3.5-flash");
+    assert.deepEqual(fell, ["gemini-3.5-flash"]);
+  });
+  assert.deepEqual(seen, ["gemini-3.8-flash:generateContent", "gemini-3.8-flash:generateContent", "gemini-3.5-flash:generateContent"]);
+  // Inne błędy (np. zły klucz) nie przełączają modelu.
+  await withFetch(() => res(400, { error: { code: 400, message: "API key not valid.", details: [{ reason: "API_KEY_INVALID" }] } }), async calls => {
+    await assert.rejects(callAi({ ...gem, retryDelays: [1], fallbackModels: ["gemini-3.5-flash"] }), e => e.code === "auth");
+    assert.equal(calls.length, 1);
+  });
+  // Wszystkie przeciążone -> błąd przeciążenia po ostatnim modelu.
+  await withFetch(() => busy, async calls => {
+    await assert.rejects(callAi({ ...gem, retryDelays: [1], fallbackRetryDelays: [1], fallbackModels: ["gemini-3.5-flash"] }), e => e.code === "overloaded");
+    assert.equal(calls.length, 4);
+  });
+});
