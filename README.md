@@ -22,7 +22,7 @@ Aplikacja ma konta (Supabase): każdy zakłada konto e-mailem i hasłem, a skła
 
 Analizy przez wspólny klucz są przerywane po ok. 140 s (limit darmowego planu Supabase); z własnym kluczem tego limitu nie ma.
 
-Strona dla znajomych: GitHub Pages (`https://msulikowski96-cmd.github.io/doradca-fantasy-lm/`) – publikuje się sama po zmianie na `main`.
+Strona dla znajomych: GitHub Pages (`https://msulikowski96-cmd.github.io/doradca-fantasy-lm/`) – publikuje się sama po zmianie na `main` (jednorazowo: Settings → Pages → Deploy from a branch → `main` / root).
 
 ## Klucz API
 

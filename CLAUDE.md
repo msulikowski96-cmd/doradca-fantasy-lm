@@ -10,7 +10,7 @@ Aplikacja w przeglądarce dla gry **Sofascore Fantasy – Liga Mistrzów 2026/27
 
 Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES). Supabase obsługujemy zwykłym `fetch` (bez `supabase-js`).
 
-GitHub Pages: `.github/workflows/pages.yml` – testy przy każdym PR, publikacja po zmianie na `main`.
+GitHub Pages: publikacja prosto z gałęzi `main` (Settings → Pages → Deploy from a branch → `main` / root). Workflowów w `.github/workflows` nie dodasz z tej sesji (brak uprawnienia `workflow`).
 
 ## Struktura
 
