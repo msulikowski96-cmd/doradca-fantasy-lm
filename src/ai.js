@@ -98,21 +98,9 @@ async function callOnce(opts) {
  */
 export async function checkAi({ provider, apiKey, model, signal }) {
   const p = provider === "gemini" ? "gemini" : "anthropic";
-  let req;
-  if (p === "gemini") {
-    const cleanModel = String(model || "").trim().replace(/^models\//, "");
-    req = {
-      url: `${GEMINI_URL}${encodeURIComponent(cleanModel)}?key=${encodeURIComponent(apiKey)}`,
-      method: "GET",
-      headers: { "x-goog-api-key": apiKey },
-    };
-  } else {
-    req = {
-      url: "https://api.anthropic.com/v1/models/" + encodeURIComponent(model),
-      method: "GET",
-      headers: anthropicHeaders(apiKey),
-    };
-  }
+  const req = p === "gemini"
+    ? { url: geminiModelUrl(model), method: "GET", headers: { "x-goog-api-key": apiKey } }
+    : { url: "https://api.anthropic.com/v1/models/" + encodeURIComponent(model), method: "GET", headers: anthropicHeaders(apiKey) };
   const body = await send(p, req, apiKey, signal);
   return (body && (body.displayName || body.display_name)) || model;
 }
@@ -160,14 +148,19 @@ function anthropicError(status, body) {
 
 /* ---------- Gemini ---------- */
 
+// Adres modelu; identyfikator z prefiksem "models/" (jak w liście modeli API) dałby 400.
+// Klucz idzie tylko w nagłówku x-goog-api-key – w adresie trafiałby do logów serwerów i proxy.
+function geminiModelUrl(model) {
+  return GEMINI_URL + encodeURIComponent(String(model || "").trim().replace(/^models\//, ""));
+}
+
 function geminiRequest({ apiKey, model, prompt, images = [], maxTokens = 4096 }) {
-  const cleanModel = String(model || "").trim().replace(/^models\//, "");
   const parts = [
     ...images.map(i => ({ inlineData: { mimeType: i.mediaType, data: i.data } })),
     { text: prompt },
   ];
   return {
-    url: `${GEMINI_URL}${encodeURIComponent(cleanModel)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    url: geminiModelUrl(model) + ":generateContent",
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
     body: {
       contents: [{ role: "user", parts }],
@@ -203,7 +196,10 @@ function geminiError(status, body) {
   const msg = err.message || "";
   const reasons = (err.details || []).map(d => d && d.reason).filter(Boolean);
   let e;
-  if (reasons.includes("API_KEY_INVALID") || /api key/i.test(msg) || /key not valid/i.test(msg)) {
+  // Treść o kluczu liczy się tylko przy błędach zapytania/autoryzacji – 429 czy 503 z taką
+  // wzmianką to nadal limit lub przeciążenie (i mają być ponawiane).
+  const keyMsg = [400, 401, 403].includes(status) && /api key|key not valid/i.test(msg);
+  if (reasons.includes("API_KEY_INVALID") || keyMsg) {
     e = new AiError("auth", "Klucz API Gemini jest nieprawidłowy. Sprawdź go w zakładce Zasady.");
   } else if (status === 401 || status === 403) {
     if (/unregistered callers/i.test(msg) || /established identity/i.test(msg)) {

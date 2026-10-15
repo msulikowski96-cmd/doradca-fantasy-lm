@@ -9,6 +9,7 @@ Potrzebny Node.js 21 lub nowszy.
 ```bash
 npm run dev     # strona na http://localhost:5173
 npm test        # testy zasad
+npm run check   # sprawdzenie składni plików w src/
 ```
 
 Bez instalowania zależności i bez budowania.
@@ -17,7 +18,7 @@ Bez instalowania zależności i bez budowania.
 
 Analiza AI działa na Twoim kluczu – do wyboru **Claude (Anthropic)** albo **Gemini (Google)**. W aplikacji: zakładka **Zasady → Model AI i klucz API**; najpierw wybierz model, potem wklej klucz tego dostawcy.
 
-- **Gemini 3.8 Flash** – klucz założysz za darmo na [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Darmowy pakiet ma dzienny limit zapytań (aktualny limit widać w AI Studio), a Google może wykorzystywać dane z darmowego pakietu do ulepszania swoich usług. Po włączeniu płatności w AI Studio limity rosną.
+- **Gemini** (3.8 Flash, 3.5 Flash, Flash Latest, 3.5 Flash-Lite) – klucz założysz za darmo na [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Darmowy pakiet ma dzienny limit zapytań (aktualny limit widać w AI Studio), a Google może wykorzystywać dane z darmowego pakietu do ulepszania swoich usług. Po włączeniu płatności w AI Studio limity rosną. Gdy wybrany model jest przeciążony (błąd 503), spróbuj za chwilę albo wybierz inny model Gemini – limity liczą się osobno dla każdego modelu.
 - **Claude (Sonnet, Opus, Haiku 5.5)** – klucz z [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys); konto API trzeba doładować (rozliczane osobno od subskrypcji Claude). Jedna analiza na Sonnet 5.5 to zwykle kilka–kilkanaście groszy, więcej przy kilku zrzutach ekranu.
 
 Klucze zostają tylko w Twojej przeglądarce (`localStorage`) i nie trafiają do kopii danych. Możesz zapisać oba i przełączać model w dowolnej chwili.
