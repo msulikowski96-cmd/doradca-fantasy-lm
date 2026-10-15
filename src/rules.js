@@ -345,6 +345,24 @@ export function mergeGameData(baseRounds, baseFixtures, gd) {
   return { rounds, fixtures };
 }
 
+/**
+ * Łączy nowy wpis kolejki z już zapisanym (np. „Zapisz punkty”, potem „Zastosuj plan”).
+ * Transfery i minusowe punkty się sumują; puste punkty z nowego wpisu nie kasują zapisanych.
+ */
+export function mergeRoundEntry(old, entry) {
+  if (!old) return entry;
+  const empty = v => v === "" || v == null;
+  return {
+    ...entry,
+    points: empty(entry.points) ? (old.points ?? "") : entry.points,
+    playerPts: (entry.playerPts || []).length ? entry.playerPts : (old.playerPts || []),
+    transfers: (old.transfers || []).concat(entry.transfers || []),
+    chip: entry.chip || old.chip || null,
+    hits: (old.hits || 0) + (entry.hits || 0),
+    summary: entry.summary || old.summary || "",
+  };
+}
+
 // Kolejka, przed którą jesteśmy, liczona z terminarza (termin = pierwszy mecz − 30 min).
 export function roundInfo(rounds, now = Date.now()) {
   const next = rounds.find(r => new Date(r.ko).getTime() - 30 * 60000 > now);

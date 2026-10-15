@@ -4,7 +4,7 @@
 import { POS, POS_PL, POS_ONE, CLUBS, SHORT, CHIPS, DEFAULT_RULES, ROUNDS, FIXTURES, EXAMPLE, STYLES, MODELS, PROVIDERS } from "./constants.js";
 import {
   r1, fmt, norm, canonClub, normPos, lastName, validateSquad, lineupProblems, autoLineup, benchOrder,
-  pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText, mergeGameData,
+  pickCaptain, cleanRec, evalRec, applyEvaluated, roundInfo, countN, timeLeft, planText, mergeGameData, mergeRoundEntry,
 } from "./rules.js";
 import { buildAnalysisPrompt, SQUAD_IMPORT_PROMPT } from "./prompt.js";
 import { askJson, imageFileToData, checkAi, keyProblem } from "./ai.js";
@@ -280,14 +280,8 @@ function logRound(extra, roster) {
     .map(([id, v]) => { const p = roster.find(x => x.id === id); return { name: p ? p.name : "?", pts: Number(v) }; }).slice(0, 15);
   const entry = Object.assign({ n, points: d.total !== undefined ? d.total : "", playerPts, transfers: [], chip: null, hits: 0, summary: "", savedAt: Date.now() }, extra || {});
   const i = state.rounds.findIndex(r => r.n === n);
-  if (i >= 0) {
-    const old = state.rounds[i];
-    entry.transfers = (old.transfers || []).concat(entry.transfers || []);
-    entry.chip = entry.chip || old.chip;
-    entry.hits = (old.hits || 0) + (entry.hits || 0);
-    entry.summary = entry.summary || old.summary;
-    state.rounds[i] = entry;
-  } else state.rounds.push(entry);
+  if (i >= 0) state.rounds[i] = mergeRoundEntry(state.rounds[i], entry);
+  else state.rounds.push(entry);
   state.rounds.sort((a, b) => a.n - b.n);
   state.draftRound = {};
 }
