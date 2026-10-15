@@ -33,3 +33,11 @@ test("proxy: nagłówki z kluczem ustala serwer, limit nie dotyczy admina", () =
   assert.equal(withinLimit({ isAdmin: false, usedToday: 0, dailyLimit: 0 }), false);
   assert.equal(withinLimit({ isAdmin: true, usedToday: 99, dailyLimit: 5 }), true);
 });
+
+test("proxy Gemini: gracz może wybrać inny model Flash z listy, ale nie spoza niej", () => {
+  for (const m of ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3.8-flash"]) {
+    assert.equal(checkTarget(gem, { url: GEMINI_BASE + m + ":generateContent", method: "POST", body: {} }).ok, true, m);
+  }
+  assert.equal(checkTarget(gem, { url: GEMINI_BASE + "gemini-2.5-pro:generateContent", method: "POST", body: {} }).ok, false);
+  assert.equal(checkTarget({ ...gem, model: "gemini-2.5-pro" }, { url: GEMINI_BASE + "gemini-2.5-pro:generateContent", method: "POST", body: {} }).ok, true);
+});

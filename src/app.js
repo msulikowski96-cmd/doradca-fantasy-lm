@@ -16,6 +16,7 @@ import { createCloud } from "./cloud.js";
 import { renderAuth } from "./account.js";
 import { renderAdmin, resetAdmin } from "./admin.js";
 import { $, esc } from "./dom.js";
+import { SHARED_GEMINI_MODELS } from "../supabase/functions/ai-proxy/policy.js";
 
 /* ---------- helpers ---------- */
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -38,7 +39,7 @@ const curFixtures = () => game.fixtures;
 const isAdmin = () => acct.mode === "cloud" && acct.profile && acct.profile.role === "admin";
 const ui = {
   tab: "squad", editing: false, draft: null, setOrig: false, selected: null, swapFrom: null, squadMsg: "",
-  aiBusy: false, ctl: null, timer: null, started: 0, retry: 0, aiMsg: "", roundImages: [], importBusy: false, importMsg: "",
+  aiBusy: false, ctl: null, timer: null, started: 0, retry: 0, fallback: null, aiMsg: "", roundImages: [], importBusy: false, importMsg: "",
   resetArm: false, importArm: false, notice: "", keyMsg: "", histDel: null,
 };
 
@@ -50,7 +51,7 @@ function selectText(el) {
   const range = document.createRange(); range.selectNodeContents(el);
   const s = getSelection(); s.removeAllRanges(); s.addRange(range);
 }
-const retryNote = () => ui.retry ? ` · serwery zajęte, próba ${ui.retry + 1}` : "";
+const retryNote = () => (ui.fallback ? ` · przeciążony, próbuję ${modelLabel(ui.fallback)}` : "") + (ui.retry ? ` · serwery zajęte, próba ${ui.retry + 1}` : "");
 
 function setSync(s, text) {
   const el = $("#sync");
@@ -80,9 +81,23 @@ const curProvider = () => PROVIDERS[curModel().provider];
 const curKey = () => settings[curProvider().keyField] || "";
 // Wspólny klucz ligi (ustawia admin, trzyma serwer) – chyba że gracz wybrał własny klucz.
 const sharedAi = () => acct.mode === "cloud" && !!(acct.aiCfg && acct.aiCfg.key_set) && !settings.ownKey;
-const aiOpts = () => sharedAi()
-  ? { provider: acct.aiCfg.provider, model: acct.aiCfg.model, apiKey: "", proxy: cloud.proxy() }
-  : { provider: curModel().provider, apiKey: curKey(), model: curModel().id };
+// Przy wspólnym kluczu Gemini gracz wybiera model z SHARED_GEMINI_MODELS (domyślnie ten od admina).
+const sharedModel = () => {
+  const c = acct.aiCfg || {};
+  return c.provider === "gemini" && SHARED_GEMINI_MODELS.includes(settings.sharedModel) ? settings.sharedModel : c.model;
+};
+// Kolejność zapasowych modeli Gemini przy przeciążeniu (503) wybranego.
+const GEMINI_FALLBACK = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.5-flash-lite"];
+const fallbacks = (provider, model) => provider === "gemini" ? GEMINI_FALLBACK.filter(m => m !== model) : [];
+const modelLabel = id => (MODELS.find(m => m.id === id) || {}).label || id;
+const aiOpts = () => {
+  const o = sharedAi()
+    ? { provider: acct.aiCfg.provider, model: sharedModel(), apiKey: "", proxy: cloud.proxy() }
+    : { provider: curModel().provider, apiKey: curKey(), model: curModel().id };
+  const fallbackModels = fallbacks(o.provider, o.model);
+  // Gdy jest model zapasowy, nie czekamy minuty na przeciążony – dwie próby i zmiana modelu.
+  return { ...o, fallbackModels, ...(fallbackModels.length ? { retryDelays: [3000, 8000] } : {}) };
+};
 const aiReady = () => sharedAi() || !!curKey();
 // Po analizie przez wspólny klucz odśwież licznik „dziś wykorzystano”.
 const refreshAiCfg = () => { if (sharedAi()) cloud.aiConfig().then(c => { acct.aiCfg = c; }).catch(() => {}); };
@@ -108,7 +123,7 @@ async function runAnalysis(fix) {
   maybeRevertFreeHit(true);
   const done = currentDone(), next = done + 1;
   const prompt = buildAnalysisPrompt(state, { done, next, free: freeNow(), fixtures: fixturesFor(next), hasImages: ui.roundImages.length > 0, fix });
-  ui.aiBusy = true; ui.aiMsg = ""; ui.retry = 0; ui.ctl = new AbortController(); ui.started = Date.now();
+  ui.aiBusy = true; ui.aiMsg = ""; ui.retry = 0; ui.fallback = null; ui.ctl = new AbortController(); ui.started = Date.now();
   // Analiza może trwać kilka minut; wygaszony ekran na telefonie zrywa połączenie.
   let wakeLock = null;
   try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { /* brak wsparcia albo niebezpieczny adres */ }
@@ -120,9 +135,10 @@ async function runAnalysis(fix) {
     const res = await askJson({
       ...aiOpts(), prompt, images, signal: ui.ctl.signal, maxTokens: 6000,
       onRetry: n => { ui.retry = n; tick(); },
+      onFallback: m => { ui.fallback = m; ui.retry = 0; tick(); },
     });
     if (!res || typeof res !== "object" || Array.isArray(res)) throw { message: "AI zwróciło odpowiedź w złym formacie. Spróbuj jeszcze raz." };
-    state.pendingRec = Object.assign(cleanRec(res, state.current), { forRound: next, afterRound: done, createdAt: Date.now() });
+    state.pendingRec = Object.assign(cleanRec(res, state.current), { forRound: next, afterRound: done, createdAt: Date.now(), model: ui.fallback || aiOpts().model });
     save();
     refreshAiCfg();
   } catch (e) {
@@ -568,6 +584,7 @@ function renderRec() {
   box.innerHTML = `<div class="card">
     <div class="rec-head"><h2>Plan na kolejkę ${esc(rec.forRound)}</h2>${status}</div>
     ${rec.summary ? `<p class="summary">${esc(rec.summary)}</p>` : ""}
+    ${rec.model ? `<p class="small muted" id="recModel">Plan przygotował: ${esc(modelLabel(rec.model))}</p>` : ""}
     <h3>Transfery · ${rec.transfers.length} ${ev.chip === "wildcard" || ev.chip === "freehit" ? "(bez limitu)" : `z ${ev.free} darmowych`}</h3>
     ${rec.transfers.length ? rec.transfers.map((t, i) => {
       const out = cur.players.find(p => p.id === t.outId);
@@ -731,7 +748,10 @@ function renderRules() {
   el.innerHTML = `
     ${accountCardHTML()}
     ${sharedAi() ? `<div class="card"><h2>Model AI</h2>
-      <p>Analizy idą przez wspólny klucz ligi: <b>${esc(sharedLabel)}</b>.</p>
+      <p>Analizy idą przez wspólny klucz ligi.</p>
+      ${cfg.provider === "gemini" ? `<div class="row"><label class="f" for="sharedModel">Model<select id="sharedModel">${SHARED_GEMINI_MODELS.map(id =>
+        `<option value="${id}" ${sharedModel() === id ? "selected" : ""}>${esc(modelLabel(id))}${id === cfg.model ? " – domyślny ligi" : ""}</option>`).join("")}</select></label></div>
+      <p class="small muted">Gdy wybrany model jest przeciążony, aplikacja sama spróbuje kolejnego.</p>` : `<p>Model: <b>${esc(sharedLabel)}</b>.</p>`}
       <p class="small muted">Dziś wykorzystano ${esc(cfg.used_today ?? 0)} z ${esc(cfg.daily_limit)} analiz${isAdmin() ? " (jako admin nie masz limitu)" : ""}. Klucz zna tylko serwer – nikt go nie zobaczy.</p>
       <div class="actions">
         <button class="btn" id="keyCheck">Sprawdź połączenie</button>
@@ -783,6 +803,8 @@ function renderRules() {
     </div>`;
 
   bindAccountCard();
+  const sm = $("#sharedModel");
+  if (sm) sm.addEventListener("change", e => { settings.sharedModel = e.target.value; saveSettings(settings); ui.keyMsg = ""; renderRules(); });
   const own = v => () => { settings.ownKey = v; saveSettings(settings); ui.keyMsg = ""; renderAll(); switchTab("rules"); };
   const on = $("#ownKeyOn"); if (on) on.addEventListener("click", own(true));
   const off = $("#ownKeyOff"); if (off) off.addEventListener("click", own(false));

@@ -40,6 +40,20 @@ function wait(ms, signal) {
  * onRetry(n): wywoływane przed n-tą ponowną próbą.
  */
 export async function callAi(opts) {
+  // Przy przeciążeniu wybranego modelu (503 mimo ponowień) próbujemy kolejnych z fallbackModels.
+  const models = [opts.model, ...(opts.fallbackModels || []).filter(m => m && m !== opts.model)];
+  for (let i = 0; ; i++) {
+    try {
+      const out = await callWithRetry({ ...opts, model: models[i], retryDelays: i === 0 ? opts.retryDelays : (opts.fallbackRetryDelays || [3000]) });
+      return { ...out, model: models[i] };
+    } catch (e) {
+      if (!(e && e.code === "overloaded") || i >= models.length - 1) throw e;
+      if (opts.onFallback) opts.onFallback(models[i + 1]);
+    }
+  }
+}
+
+async function callWithRetry(opts) {
   const delays = opts.retryDelays || RETRY_DELAYS;
   for (let attempt = 0; ; attempt++) {
     try { return await callOnce(opts); }
