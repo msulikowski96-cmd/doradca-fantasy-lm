@@ -53,7 +53,7 @@ test("Gemini: zapytanie idzie do generateContent z obrazem i trybem JSON", async
     const out = await askJson({ ...gem, images: [{ mediaType: "image/jpeg", data: "QUJD" }], maxTokens: 2048 });
     assert.deepEqual(out, { ok: true });
     const c = calls[0];
-    assert.equal(c.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+    assert.equal(c.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=AIzaTest");
     assert.equal(c.init.headers["x-goog-api-key"], "AIzaTest");
     assert.deepEqual(c.body.contents[0].parts[0], { inlineData: { mimeType: "image/jpeg", data: "QUJD" } });
     assert.equal(c.body.contents[0].parts[1].text, "p");
@@ -116,7 +116,7 @@ test("checkAi pyta o model bez generowania odpowiedzi", async () => {
   await withFetch(() => res(200, { name: "models/gemini-3.8-flash", displayName: "Gemini 3.8 Flash" }), async calls => {
     assert.equal(await checkAi(gem), "Gemini 3.8 Flash");
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash");
+    assert.equal(calls[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash?key=AIzaTest");
     assert.equal(calls[0].init.method, "GET");
     assert.equal(calls[0].init.headers["x-goog-api-key"], "AIzaTest");
   });

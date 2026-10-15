@@ -98,9 +98,21 @@ async function callOnce(opts) {
  */
 export async function checkAi({ provider, apiKey, model, signal }) {
   const p = provider === "gemini" ? "gemini" : "anthropic";
-  const req = p === "gemini"
-    ? { url: GEMINI_URL + encodeURIComponent(model), method: "GET", headers: { "x-goog-api-key": apiKey } }
-    : { url: "https://api.anthropic.com/v1/models/" + encodeURIComponent(model), method: "GET", headers: anthropicHeaders(apiKey) };
+  let req;
+  if (p === "gemini") {
+    const cleanModel = String(model || "").trim().replace(/^models\//, "");
+    req = {
+      url: `${GEMINI_URL}${encodeURIComponent(cleanModel)}?key=${encodeURIComponent(apiKey)}`,
+      method: "GET",
+      headers: { "x-goog-api-key": apiKey },
+    };
+  } else {
+    req = {
+      url: "https://api.anthropic.com/v1/models/" + encodeURIComponent(model),
+      method: "GET",
+      headers: anthropicHeaders(apiKey),
+    };
+  }
   const body = await send(p, req, apiKey, signal);
   return (body && (body.displayName || body.display_name)) || model;
 }
@@ -149,12 +161,13 @@ function anthropicError(status, body) {
 /* ---------- Gemini ---------- */
 
 function geminiRequest({ apiKey, model, prompt, images = [], maxTokens = 4096 }) {
+  const cleanModel = String(model || "").trim().replace(/^models\//, "");
   const parts = [
     ...images.map(i => ({ inlineData: { mimeType: i.mediaType, data: i.data } })),
     { text: prompt },
   ];
   return {
-    url: GEMINI_URL + encodeURIComponent(model) + ":generateContent",
+    url: `${GEMINI_URL}${encodeURIComponent(cleanModel)}:generateContent?key=${encodeURIComponent(apiKey)}`,
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
     body: {
       contents: [{ role: "user", parts }],
@@ -190,12 +203,25 @@ function geminiError(status, body) {
   const msg = err.message || "";
   const reasons = (err.details || []).map(d => d && d.reason).filter(Boolean);
   let e;
-  if (reasons.includes("API_KEY_INVALID") || /api key not valid/i.test(msg)) e = new AiError("auth", "Klucz API Gemini jest nieprawidłowy. Sprawdź go w zakładce Zasady.");
-  else if (status === 401 || status === 403) e = new AiError("forbidden", "Ten klucz nie ma dostępu do Gemini API. Sprawdź go w Google AI Studio.");
-  else if (status === 404) e = new AiError("model", "Wybrany model Gemini nie jest dostępny. Zmień model w zakładce Zasady.");
-  else if (status === 429) e = new AiError("rate_limited", "Wyczerpany limit zapytań Gemini. Darmowy pakiet ma limit dzienny – spróbuj później albo włącz płatności w Google AI Studio.");
-  else if (status >= 500) e = new AiError("overloaded", "Serwery Google są przeciążone. Spróbuj za chwilę.");
-  else e = new AiError("bad_request", "Gemini odrzuciło zapytanie" + (msg ? `: ${msg}` : "."));
+  if (reasons.includes("API_KEY_INVALID") || /api key/i.test(msg) || /key not valid/i.test(msg)) {
+    e = new AiError("auth", "Klucz API Gemini jest nieprawidłowy. Sprawdź go w zakładce Zasady.");
+  } else if (status === 401 || status === 403) {
+    if (/unregistered callers/i.test(msg) || /established identity/i.test(msg)) {
+      e = new AiError("auth", "Brak autoryzacji lub klucz API Gemini jest nieprawidłowy. Sprawdź klucz w Google AI Studio.");
+    } else {
+      e = new AiError("forbidden", "Ten klucz nie ma dostępu do Gemini API. Sprawdź uprawnienia w Google AI Studio.");
+    }
+  } else if (status === 404) {
+    e = new AiError("model", "Wybrany model Gemini nie jest dostępny. Zmień model w zakładce Zasady.");
+  } else if (status === 429) {
+    e = new AiError("rate_limited", "Wyczerpany limit zapytań Gemini. Darmowy pakiet ma limit dzienny – spróbuj później albo włącz płatności w Google AI Studio.");
+  } else if (status === 503 || (status >= 500 && /high demand/i.test(msg))) {
+    e = new AiError("overloaded", "Model Gemini jest chwilowo przeciążony (503 high demand). Spróbuj za chwilę lub wybierz Gemini 3.5 Flash w zakładce Zasady.");
+  } else if (status >= 500) {
+    e = new AiError("overloaded", "Serwery Google są przeciążone. Spróbuj za chwilę.");
+  } else {
+    e = new AiError("bad_request", "Gemini odrzuciło zapytanie" + (msg ? `: ${msg}` : "."));
+  }
   e.retryAfter = geminiRetryDelay(err);
   return e;
 }

@@ -104,7 +104,7 @@ export const PROVIDERS = {
     note: "API jest płatne osobno od subskrypcji Claude.",
   },
   gemini: {
-    label: "Gemini (Google)", keyField: "geminiKey", keyPrefix: "", placeholder: "AIza…",
+    label: "Gemini (Google)", keyField: "geminiKey", keyPrefix: "", placeholder: "AIza… lub AQ…",
     keyUrl: "https://aistudio.google.com/apikey", keyHost: "aistudio.google.com",
     note: "Klucz założysz za darmo w Google AI Studio. Darmowy pakiet ma dzienny limit zapytań, a Google może wykorzystywać przesłane w nim dane do ulepszania swoich usług.",
   },
@@ -114,6 +114,9 @@ export const MODELS = [
   { id: "claude-sonnet-5-5", label: "Sonnet 5.5 (zalecany)", provider: "anthropic" },
   { id: "claude-opus-5-5", label: "Opus 5.5 (dokładniejszy, droższy)", provider: "anthropic" },
   { id: "claude-haiku-5-5", label: "Haiku 5.5 (najtańszy)", provider: "anthropic" },
-  // Identyfikator z dokumentacji Gemini API (model GA, październik 2026).
+  // Modele Gemini API (Google AI Studio).
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash (szybki, stabilny)", provider: "gemini" },
   { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "gemini" },
+  { id: "gemini-flash-latest", label: "Gemini Flash (najnowszy)", provider: "gemini" },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite (oszczędny)", provider: "gemini" },
 ];
