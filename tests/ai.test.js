@@ -150,3 +150,35 @@ test("Gemini: wzmianka o kluczu przy 429/503 nie zmienia błędu w „zły klucz
     assert.equal(calls.length, 1);
   });
 });
+
+test("proxy: zapytanie idzie do funkcji z tokenem, bez klucza; błędy proxy nie są ponawiane", async () => {
+  const proxy = { url: "https://x.supabase.co/functions/v1/ai-proxy", headers: async () => ({ authorization: "Bearer T", apikey: "pk", "content-type": "application/json" }) };
+  const noKey = { provider: "gemini", apiKey: "", model: "gemini-3.8-flash", prompt: "p", proxy };
+  await withFetch(() => geminiOk('{"ok":1}'), async calls => {
+    assert.deepEqual(await askJson(noKey), { ok: 1 });
+    const c = calls[0];
+    assert.equal(c.url, proxy.url);
+    assert.equal(c.init.headers.authorization, "Bearer T");
+    assert.equal(c.body.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+    assert.equal(c.body.method, "POST");
+    assert.equal(c.body.body.generationConfig.responseMimeType, "application/json");
+    assert.ok(!JSON.stringify(c.body).includes("x-goog-api-key"));
+  });
+  await withFetch(() => res(429, { source: "proxy", code: "daily_limit", message: "Wykorzystano dzienny limit analiz (5)." }), async calls => {
+    await assert.rejects(callAi({ ...noKey, retryDelays: [1, 1] }), e => e.code === "daily_limit" && /dzienny limit/.test(e.message));
+    assert.equal(calls.length, 1);
+  });
+  await withFetch(() => res(546, null), async calls => {
+    await assert.rejects(callAi({ ...noKey, retryDelays: [1, 1] }), e => e.code === "timeout");
+    assert.equal(calls.length, 1);
+  });
+  // 503 od dostawcy przechodzi przez proxy bez zmian i jest ponawiane jak zwykle.
+  await withFetch((c, n) => n < 2 ? res(503, { error: { code: 503, status: "UNAVAILABLE", message: "high demand" } }) : geminiOk("{}"), async calls => {
+    assert.equal((await callAi({ ...noKey, retryDelays: [1, 1] })).text, "{}");
+    assert.equal(calls.length, 2);
+  });
+  await withFetch(() => res(200, { displayName: "Gemini 3.8 Flash" }), async calls => {
+    assert.equal(await checkAi(noKey), "Gemini 3.8 Flash");
+    assert.equal(calls[0].body.method, "GET");
+  });
+});

@@ -14,6 +14,16 @@ npm run check   # sprawdzenie składni plików w src/
 
 Bez instalowania zależności i bez budowania.
 
+## Konta i liga znajomych
+
+Aplikacja ma konta (Supabase): każdy zakłada konto e-mailem i hasłem, a skład, historia i plany zapisują się w chmurze – są dostępne na każdym telefonie. Można też korzystać bez konta (dane tylko w przeglądarce).
+
+**Admin** (zakładka Admin) widzi ranking ligi i składy graczy, blokuje i usuwa konta, nadaje rolę admina, ustawia nowe hasło (zamiast maila z resetem), ustawia **wspólny klucz AI** z dziennym limitem analiz na osobę (klucz zna tylko serwer) i wpisuje terminarz kolejek dla wszystkich. Przycisk „Pobierz z SofaScore” zwykle nie działa – SofaScore nie ma publicznego API i blokuje zapytania z serwerów.
+
+Analizy przez wspólny klucz są przerywane po ok. 140 s (limit darmowego planu Supabase); z własnym kluczem tego limitu nie ma.
+
+Strona dla znajomych: GitHub Pages (`https://msulikowski96-cmd.github.io/doradca-fantasy-lm/`) – publikuje się sama po zmianie na `main`.
+
 ## Klucz API
 
 Analiza AI działa na Twoim kluczu – do wyboru **Claude (Anthropic)** albo **Gemini (Google)**. W aplikacji: zakładka **Zasady → Model AI i klucz API**; najpierw wybierz model, potem wklej klucz tego dostawcy.

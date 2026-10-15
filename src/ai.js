@@ -59,14 +59,22 @@ export const keyProblem = key => /[^\x21-\x7E]/.test(String(key || ""))
   ? "Klucz API zawiera niedozwolony znak (spację, złamanie linii, „…” albo polską literę). Skopiuj go ponownie i wklej w zakładce Zasady."
   : "";
 
-/** Wysyła zapytanie i zwraca sparsowane body; błędy HTTP i sieci zamienia na AiError. */
-async function send(provider, { url, method = "POST", headers, body }, apiKey, signal) {
-  if (!apiKey) throw new AiError("no_key", "Dodaj klucz API w zakładce Zasady.");
-  const bad = keyProblem(apiKey);
-  if (bad) throw new AiError("auth", bad);
+/**
+ * Wysyła zapytanie i zwraca sparsowane body; błędy HTTP i sieci zamienia na AiError.
+ * proxy = { url, headers: async () => ({...}) } – zapytanie idzie przez funkcję ai-proxy
+ * (wspólny klucz admina); proxy dokłada klucz, a odpowiedź dostawcy oddaje bez zmian.
+ */
+async function send(provider, { url, method = "POST", headers, body }, apiKey, signal, proxy) {
+  if (!proxy) {
+    if (!apiKey) throw new AiError("no_key", "Dodaj klucz API w zakładce Zasady.");
+    const bad = keyProblem(apiKey);
+    if (bad) throw new AiError("auth", bad);
+  }
   let res;
   try {
-    res = await fetch(url, { method, signal, headers, body: body ? JSON.stringify(body) : undefined });
+    res = proxy
+      ? await fetch(proxy.url, { method: "POST", signal, headers: await proxy.headers(), body: JSON.stringify({ url, method, body }) })
+      : await fetch(url, { method, signal, headers, body: body ? JSON.stringify(body) : undefined });
   } catch (e) {
     if (e && e.name === "AbortError") throw cancelled();
     const detail = e && e.message ? ` Szczegóły: ${e.message}` : "";
@@ -75,6 +83,11 @@ async function send(provider, { url, method = "POST", headers, body }, apiKey, s
   let data = null;
   try { data = await res.json(); } catch (e) { /* pusta odpowiedź */ }
   if (!res.ok) {
+    // Błędy samego proxy (konto, limit, czas) mają gotowy komunikat i nie są ponawiane.
+    if (proxy && data && data.source === "proxy") throw new AiError(data.code || "proxy", data.message || "Serwer odrzucił zapytanie.");
+    if (proxy && (res.status === 504 || res.status === 546)) {
+      throw new AiError("timeout", "Analiza trwała za długo i serwer ją przerwał (limit 150 s). Spróbuj ponownie za chwilę.");
+    }
     if (provider === "gemini") throw geminiError(res.status, data);
     const err = anthropicError(res.status, data);
     err.retryAfter = Number(res.headers && res.headers.get && res.headers.get("retry-after")) || 0;
@@ -86,7 +99,7 @@ async function send(provider, { url, method = "POST", headers, body }, apiKey, s
 async function callOnce(opts) {
   const provider = opts.provider === "gemini" ? "gemini" : "anthropic";
   const req = provider === "gemini" ? geminiRequest(opts) : anthropicRequest(opts);
-  const body = await send(provider, req, opts.apiKey, opts.signal);
+  const body = await send(provider, req, opts.apiKey, opts.signal, opts.proxy);
   const out = provider === "gemini" ? geminiText(body) : anthropicText(body);
   if (!out.text) throw new AiError("empty", "AI nie zwróciło odpowiedzi. Spróbuj ponownie.");
   return out;
@@ -96,12 +109,12 @@ async function callOnce(opts) {
  * Sprawdza klucz, sieć i dostęp do modelu jednym lekkim zapytaniem o model
  * (bez generowania odpowiedzi). Zwraca nazwę modelu albo rzuca AiError.
  */
-export async function checkAi({ provider, apiKey, model, signal }) {
+export async function checkAi({ provider, apiKey, model, signal, proxy }) {
   const p = provider === "gemini" ? "gemini" : "anthropic";
   const req = p === "gemini"
     ? { url: geminiModelUrl(model), method: "GET", headers: { "x-goog-api-key": apiKey } }
     : { url: "https://api.anthropic.com/v1/models/" + encodeURIComponent(model), method: "GET", headers: anthropicHeaders(apiKey) };
-  const body = await send(p, req, apiKey, signal);
+  const body = await send(p, req, apiKey, signal, proxy);
   return (body && (body.displayName || body.display_name)) || model;
 }
 

@@ -4,6 +4,10 @@ import { DEFAULT_RULES, MODELS } from "./constants.js";
 
 const STATE_KEY = "doradca-fantasy-lm-v1";
 const SETTINGS_KEY = "doradca-fantasy-lm-settings";
+const MODE_KEY = "doradca-fantasy-lm-mode";
+
+/** Klucz kopii stanu w przeglądarce: osobny dla każdego konta, wspólny dla trybu bez konta. */
+export const stateKey = uid => (uid ? `${STATE_KEY}:${uid}` : STATE_KEY);
 
 const clone = o => JSON.parse(JSON.stringify(o));
 
@@ -31,16 +35,23 @@ export function normalizeState(s) {
   return out;
 }
 
-export function loadState() {
-  try { const raw = localStorage.getItem(STATE_KEY); return raw ? normalizeState(JSON.parse(raw)) : freshState(); }
+export function loadState(key = STATE_KEY) {
+  try { const raw = localStorage.getItem(key); return raw ? normalizeState(JSON.parse(raw)) : freshState(); }
   catch (e) { return freshState(); }
 }
 
-export function saveState(state) {
+export function saveState(state, key = STATE_KEY) {
   state.updatedAt = Date.now();
-  try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); return true; }
+  try { localStorage.setItem(key, JSON.stringify(state)); return true; }
   catch (e) { return false; }
 }
+
+/** Czy stan ma cokolwiek wartego zachowania (skład albo historię). */
+export const hasData = s => !!(s && (s.current || (Array.isArray(s.rounds) && s.rounds.length)));
+
+// Tryb pracy: "local" = użytkownik wybrał pracę bez konta (nie pokazujemy ekranu logowania).
+export function loadMode() { try { return localStorage.getItem(MODE_KEY) || ""; } catch (e) { return ""; } }
+export function saveMode(mode) { try { mode ? localStorage.setItem(MODE_KEY, mode) : localStorage.removeItem(MODE_KEY); } catch (e) { /* tryb prywatny */ } }
 
 export function loadSettings() {
   const def = { apiKey: "", geminiKey: "", model: MODELS[0].id };

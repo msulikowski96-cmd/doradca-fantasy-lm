@@ -8,7 +8,9 @@ Aplikacja w przeglądarce dla gry **Sofascore Fantasy – Liga Mistrzów 2026/27
 - `npm test` – testy zasad i połączenia z AI (`node:test`, bez zależności).
 - `npm run check` – sprawdzenie składni każdego pliku w `src/` (`node --check` po kolei; `node --check a.js b.js` sprawdza tylko pierwszy plik).
 
-Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
+Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES). Supabase obsługujemy zwykłym `fetch` (bez `supabase-js`).
+
+GitHub Pages: `.github/workflows/pages.yml` – testy przy każdym PR, publikacja po zmianie na `main`.
 
 ## Struktura
 
@@ -19,7 +21,12 @@ Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 - `src/prompt.js` – treść zapytań do Claude (analiza po kolejce, odczyt składu ze zrzutu).
 - `src/ai.js` – `callAi`/`askJson` z przeglądarki (`fetch`) do dwóch dostawców: Anthropic Messages API (nagłówek `anthropic-dangerous-direct-browser-access`) i Gemini API (`v1beta/models/{model}:generateContent`, prefiks `models/` usuwany z id, klucz **tylko** w nagłówku `x-goog-api-key` – nie w `?key=`, bo adres trafia do logów), `responseMimeType: application/json`, zapas `maxOutputTokens` na tokeny myślenia, części `thought: true` pomijane). Wspólne: `keyProblem()` (klucz tylko ze znaków ASCII bez spacji – inaczej przeglądarka rzuca TypeError przy nagłówku), `checkAi()` (GET modelu – przycisk „Sprawdź połączenie”), błąd sieci ze szczegółem z przeglądarki, ponawianie przy 429/529/5xx (bez czekania, gdy API każe czekać > 30 s), parsowanie JSON, zmniejszanie zrzutów (`imageFileToData` → `{ mediaType, data }`). Testy w `tests/ai.test.js` (mock `fetch`).
 - `src/storage.js` – stan w `localStorage`; ustawienia w osobnym wpisie: `model`, `apiKey` (Anthropic), `geminiKey` – nie trafiają do eksportu. `lastPlan` = tekst ostatnio zastosowanego planu + `undo` (stan sprzed zmian; zerowany po ręcznej edycji składu).
-- `src/app.js` – renderowanie zakładek (Skład, Kolejka, Historia, Zasady) i obsługa zdarzeń.
+- `src/app.js` – renderowanie zakładek (Skład, Kolejka, Historia, Zasady, Admin), start aplikacji (konto albo tryb bez konta) i obsługa zdarzeń.
+- `src/config.js` – adres projektu Supabase i klucz publikowalny (jawny z założenia; dane chroni RLS).
+- `src/cloud.js` – `createCloud()`: logowanie/rejestracja (GoTrue), sesja z odświeżaniem tokenu, PostgREST (profil, stan, game_data, RPC), funkcje brzegowe, `proxy()` dla AI. Testy w `tests/cloud.test.js` (mock `fetch`).
+- `src/account.js` – ekran logowania/rejestracji. `src/admin.js` – panel admina (ranking, konta, wspólny klucz AI, terminarz). `src/dom.js` – `$`, `esc`.
+- `supabase/migrations/` – schemat: `profiles` (rola, blokada), `user_states` (stan aplikacji jako jsonb), `game_data` (terminarz od admina), `ai_config` (wspólny klucz – bez polityk RLS, czyta tylko serwer), `ai_usage` (dzienny licznik). RPC: `get_ai_config`, `set_ai_config`, `clear_ai_key`; trigger `protect_profile` (role/blokady zmienia tylko admin).
+- `supabase/functions/` – `ai-proxy` (wspólny klucz admina, tylko skonfigurowany model, dzienny limit, przerwanie po 140 s – limit darmowego planu 150 s; logika w `policy.js`, testy `tests/proxy.test.js`), `admin-users` (nowe hasło, usunięcie konta – darmowy SMTP Supabase nie wysyła maili do znajomych), `sofascore` (terminarz z nieoficjalnego API; z serwerów Supabase SofaScore zwraca 403 „challenge” – nie obchodzimy tego, admin wpisuje kolejkę ręcznie; logika w `format.js`, testy `tests/sofascore.test.js`). Wdrożenie: narzędzia Supabase (`deploy_edge_function`), `verify_jwt: true`.
 - `claude-ai-artifact/doradca-fantasy-lm.html` – pierwotna wersja jako artifact na claude.ai (używa `window.claude` – `sample`, `db`). Edytuj tylko, jeśli użytkownik prosi o zmianę wersji na claude.ai.
 
 ## Zasady gry (egzekwowane w `rules.js`)
@@ -29,6 +36,13 @@ Nie ma kroku budowania ani zależności npm. Czysty HTML/CSS/JS (moduły ES).
 - Jedenastka: 1 GK, 3–5 DEF, 2–5 MID, 1–3 FWD.
 - Chipy: Wildcard, Free Hit (skład wraca po kolejce), Triple Captain.
 - **Niepotwierdzone założenia:** 2 darmowe transfery na kolejkę, −4 pkt za kolejny. Użytkownik może je zmienić w zakładce Zasady. Nie wpisuj na sztywno innych wartości bez źródła.
+
+## Konta (Supabase, projekt `zjprowiosdxiokfwurpu`)
+
+- Bez logowania aplikacja działa jak dawniej (tryb bez konta, `localStorage`). Zalogowany: stan w `user_states` + kopia w `localStorage` pod kluczem per konto (`stateKey(uid)`).
+- Skład z trybu bez konta przenosimy na konto tylko po kliknięciu „Przenieś” (telefon może być wspólny).
+- Rolę admina nadaje się SQL-em (`update profiles set role='admin' where email=…`) – nie wpisuj e-maili do repo.
+- Zmiany schematu: nowa migracja (`apply_migration`) + plik w `supabase/migrations/` + test RLS (blok `do $$ … raise exception $$`, wycofuje się sam).
 
 ## Konwencje
 

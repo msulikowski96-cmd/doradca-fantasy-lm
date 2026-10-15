@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_RULES, EXAMPLE } from "../src/constants.js";
-import { canonClub, findByName, validateSquad, lineupProblems, autoLineup, evalRec, applyEvaluated, cleanRec, roundInfo, plural, countN, timeLeft, planText } from "../src/rules.js";
+import { canonClub, findByName, validateSquad, lineupProblems, autoLineup, evalRec, applyEvaluated, cleanRec, roundInfo, plural, countN, timeLeft, planText, leagueTable, mergeGameData } from "../src/rules.js";
 import { ROUNDS } from "../src/constants.js";
 
 const rules = DEFAULT_RULES;
@@ -151,4 +151,35 @@ test("planText opisuje transfery, kapitana, jedenastkę i bank", () => {
   assert.doesNotMatch(txt, /Minusowe/);
   const lineup = txt.split("\n").find(l => l.startsWith("Jedenastka:"));
   assert.equal(lineup.split(/[;,]/).length, 11);
+});
+
+test("leagueTable liczy sumę punktów, ostatnią kolejkę i miejsca ex aequo", () => {
+  const st = rounds => ({ rounds });
+  const t = leagueTable([
+    { id: "a", name: "Ala", state: st([{ n: 1, points: 50, transfers: [{}] }, { n: 2, points: 61 }]) },
+    { id: "b", name: "Bartek", state: st([{ n: 1, points: 70 }, { n: 2, points: "" }, { n: 3, points: 41, transfers: [{}, {}] }]) },
+    { id: "c", name: "Cezary", state: st([{ n: 1, points: 111 }]) },
+    { id: "d", name: "Dorota", state: {} },
+  ]);
+  assert.deepEqual(t.map(r => [r.rank, r.name, r.total]), [[1, "Ala", 111], [1, "Bartek", 111], [1, "Cezary", 111], [4, "Dorota", 0]]);
+  const b = t.find(r => r.id === "b");
+  assert.equal(b.played, 2);
+  assert.equal(b.lastRound, 3);
+  assert.equal(b.lastPoints, 41);
+  assert.equal(b.transfers, 2);
+  assert.equal(t.find(r => r.id === "d").lastRound, null);
+});
+
+test("mergeGameData: terminarz admina nadpisuje wbudowany, złe wpisy są pomijane", () => {
+  const base = [{ n: 3, ko: "2026-10-20T18:45:00+02:00", sure: true }, { n: 4, ko: "2026-11-03T18:45:00+01:00", sure: false }];
+  const m = mergeGameData(base, { 3: "stary" }, {
+    rounds: [{ n: 4, ko: "2026-11-04T17:45:00.000Z", sure: true }, { n: 5, ko: "zła data" }, { n: 9, ko: "2027-02-01T20:00:00Z" }],
+    fixtures: { 4: "Wt 04.11 (18:45): A – B", 3: "  " },
+  });
+  assert.deepEqual(m.rounds.map(r => [r.n, r.ko, r.sure]), [
+    [3, "2026-10-20T18:45:00+02:00", true], [4, "2026-11-04T17:45:00.000Z", true], [9, "2027-02-01T20:00:00Z", true]]);
+  assert.equal(m.fixtures[3], "stary");
+  assert.equal(m.fixtures[4], "Wt 04.11 (18:45): A – B");
+  assert.equal(base[1].sure, false); // wejście nie zmienione
+  assert.deepEqual(mergeGameData(base, {}, null).rounds, base);
 });
